@@ -71,7 +71,7 @@ def main() -> int:
         return 2
 
     try:
-        if not collector.acquire_native_loop_lock():
+        if not collector.acquire_loop_lock():
             show_error(
                 "Claude Usage Bot is already running, or its data folder "
                 "is not writable."

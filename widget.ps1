@@ -443,7 +443,7 @@ function Set-Gauge([int]$i, $g, $accent, [double]$elapsed = 0) {
     # "~" is a local estimate; "*" is an exact server reading that is stale.
     $prefix = ''
     $suffix = ''
-    if ($g.source -eq 'estimated') { $prefix = '~' }
+    if ($g.source -notin @('live', 'last_live')) { $prefix = '~' }
     if ($g.source -eq 'last_live') { $suffix = '*' }
     $pctTb.Text = ('{0}{1:N0}%{2}' -f $prefix, ($pct * 100), $suffix)
     $pctTb.Foreground = ConvertTo-Brush (Get-Level $pct).B
@@ -526,7 +526,9 @@ function Update-Widget {
         if ($session.source -eq 'live') {
             $d = ('live from your account  -  {0} tokens counted locally this session' -f $session.used_label)
         } elseif ($session.source -eq 'last_live') {
-            $syncAge = Format-Duration ([double]$snap.live.age_seconds)
+            $ageSeconds = $session.age_seconds
+            if ($null -eq $ageSeconds) { $ageSeconds = $snap.live.age_seconds }
+            $syncAge = Format-Duration ([double]$ageSeconds)
             $d = ('last account sync {0} ago (*)  -  {1} tokens counted locally' -f $syncAge, $session.used_label)
         } elseif ($session.source -eq 'configured') {
             $d = ('{0} / {1} tokens this session  -  calibrated' -f $session.used_label, $session.limit_label)
@@ -826,7 +828,7 @@ $wanderItem = Add-MenuItem 'Let it wander' {
 }
 $wanderItem.IsCheckable = $true
 Add-MenuItem 'Jump!' { Start-Jump } | Out-Null
-Add-MenuItem 'Refresh now' { Update-Widget } | Out-Null
+Add-MenuItem 'Reload snapshot' { Update-Widget } | Out-Null
 if ($NativeMode) {
     Add-MenuItem 'Open collector settings' {
         if ($CollectorDataDir -and (Test-Path -LiteralPath $CollectorDataDir)) {

@@ -4,13 +4,18 @@
 ' install.sh rewrites DISTRO below to the WSL distro that runs the collector.
 
 Const DISTRO = "__WSL_DISTRO__"
+Const WIDGET_PATH = "__WIDGET_PATH__"
+Const DATA_PATH = "__DATA_PATH__"
 
-Dim fso, shell, here, ps1, target, windowsDir, wsl, powershell
+Dim fso, shell, here, ps1, data, target, windowsDir, wsl, powershell
 Set fso = CreateObject("Scripting.FileSystemObject")
 Set shell = CreateObject("WScript.Shell")
 
 here = fso.GetParentFolderName(WScript.ScriptFullName)
-ps1 = fso.BuildPath(here, "widget.ps1")
+ps1 = WIDGET_PATH
+data = DATA_PATH
+If Left(ps1, 2) = "__" Then ps1 = fso.BuildPath(here, "widget.ps1")
+If Left(data, 2) = "__" Then data = fso.BuildPath(here, "usage.json")
 windowsDir = shell.ExpandEnvironmentStrings("%SystemRoot%")
 wsl = fso.BuildPath(windowsDir, "System32\wsl.exe")
 powershell = fso.BuildPath(windowsDir, "System32\WindowsPowerShell\v1.0\powershell.exe")
@@ -31,4 +36,4 @@ End If
 shell.Run target, 0, False
 On Error GoTo 0
 
-shell.Run """" & powershell & """ -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File """ & ps1 & """", 0, False
+shell.Run """" & powershell & """ -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File """ & ps1 & """ -DataPath """ & data & """", 0, False

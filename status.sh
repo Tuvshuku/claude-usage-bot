@@ -78,7 +78,9 @@ case "${COUNT:-0}" in
     *) warn "$COUNT instances running - close the extras from the right-click menu" ;;
 esac
 
-STARTUP="$(dirname "$(dirname "$DATA")")/AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Startup/ClaudeUsageBot.vbs"
+STARTUP_WIN="$(/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe -NoProfile \
+    -Command '[Environment]::GetFolderPath("Startup")' 2>/dev/null | tr -d '\r')"
+STARTUP="$(wslpath -u "$STARTUP_WIN" 2>/dev/null)/ClaudeUsageBot.vbs"
 if [[ -f "$STARTUP" ]]; then
     ok "launches at Windows sign-in"
 else

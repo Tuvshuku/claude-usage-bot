@@ -41,7 +41,7 @@ class LiveUsageCacheTests(unittest.TestCase):
                     attempt_at=0.0, success_at=0.0, data=None, error=None
                 )
                 cfg = {"live_sync": True, "live_interval_seconds": 60}
-                payload = {"limits": []}
+                payload = {"limits": [{"kind": "session", "percent": 20, "resets_at": 2000}]}
 
                 with patch.object(
                     collector._LIVE_OPENER,

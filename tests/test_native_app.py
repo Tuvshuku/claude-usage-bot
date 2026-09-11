@@ -1,5 +1,6 @@
 import os
 import tempfile
+import types
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -8,6 +9,24 @@ import native_app
 
 
 class NativeLauncherTests(unittest.TestCase):
+    def test_host_passes_configured_output_to_collector_and_widget(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.object(
+            native_app, "os", types.SimpleNamespace(name="nt")
+        ), patch.object(native_app.collector, "APP_DIR", Path(tmp)), patch.object(
+            native_app.collector, "acquire_loop_lock", return_value=True
+        ), patch.object(native_app, "install_example_config"), patch.object(
+            native_app.collector, "load_config", return_value={
+                "output_path": "custom folder/snapshot.json", "interval_seconds": 5,
+            }
+        ), patch.object(native_app.collector, "load_state", return_value={}), patch.object(
+            native_app.collector, "run_once"
+        ) as collect, patch.object(native_app, "launch_widget") as launch:
+            launch.return_value.poll.return_value = 0
+            self.assertEqual(native_app.main(), 0)
+            expected = Path(tmp) / "custom folder" / "snapshot.json"
+            self.assertEqual(collect.call_args.args[2], expected)
+            launch.assert_called_once_with(expected)
+
     def test_widget_uses_system_powershell_and_passes_paths_as_arguments(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

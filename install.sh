@@ -59,13 +59,25 @@ case "$DISTRO" in
         DISTRO=""
         ;;
 esac
-sed "s/__WSL_DISTRO__/${DISTRO}/" Start-Widget.vbs > "$TARGET_DIR/Start-Widget.vbs"
+WIN_DIR="$(wslpath -w "$TARGET_DIR")"
+WIN_DATA="$(wslpath -w "$DATA_PATH")"
+# Absolute paths keep the same launcher usable beside the widget and in Startup.
+python3 - "$DISTRO" "$WIN_DIR" "$WIN_DATA" "$TARGET_DIR/Start-Widget.vbs" <<'PY'
+import sys
+from pathlib import Path
+from launcher_config import render_wsl_launcher
+
+distro, widget_dir, data, destination = sys.argv[1:]
+Path(destination).write_text(render_wsl_launcher(
+    Path("Start-Widget.vbs").read_text(), distro, widget_dir + "\\widget.ps1", data
+), encoding="utf-16")
+PY
 echo "copied       : widget.ps1, Start-Widget.vbs (distro: ${DISTRO:-<default>})"
 
-WIN_DIR="$(wslpath -w "$TARGET_DIR")"
-
 if [[ $AUTOSTART -eq 1 ]]; then
-    STARTUP="$(dirname "$TARGET_DIR")/AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Startup"
+    STARTUP_WIN="$(/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe -NoProfile \
+        -Command '[Environment]::GetFolderPath("Startup")' | tr -d '\r')"
+    STARTUP="$(wslpath -u "$STARTUP_WIN")"
     if [[ -d "$STARTUP" ]]; then
         AUTOSTART_PATH="$STARTUP/ClaudeUsageBot.vbs"
         LEGACY_AUTOSTART="$STARTUP/CuteClaudeWidget.vbs"
@@ -88,8 +100,8 @@ Description=Claude Usage Bot collector
 
 [Service]
 Type=simple
-WorkingDirectory=$APP_DIR
-ExecStart=/usr/bin/env python3 $APP_DIR/collector.py --loop
+WorkingDirectory="$APP_DIR"
+ExecStart=/usr/bin/env python3 "$APP_DIR/collector.py" --loop
 Restart=always
 RestartSec=5
 

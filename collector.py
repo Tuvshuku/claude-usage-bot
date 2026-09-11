@@ -70,7 +70,7 @@ PROJECTS_DIR = Path.home() / ".claude" / "projects"
 HOUR = 3600
 DAY = 86400
 WEEK = 7 * DAY
-STATE_VERSION = 4
+STATE_VERSION = 5
 
 # --------------------------------------------------------------------------
 # Pricing, USD per 1M tokens (base input, output).
@@ -174,8 +174,8 @@ def _config_number(cfg: dict, key: str, minimum: float) -> float:
     return number
 
 
-def _positive_setting(value, default):
-    if value == "auto":
+def _positive_setting(value, default, *, allow_auto: bool = True):
+    if value == "auto" and allow_auto:
         return "auto"
     try:
         number = float(value)
@@ -183,7 +183,7 @@ def _positive_setting(value, default):
         return default
     if isinstance(value, bool) or not math.isfinite(number) or number <= 0:
         return default
-    return int(number)
+    return max(int(number), 1)
 
 
 def validate_config(cfg: dict) -> dict:
@@ -199,7 +199,9 @@ def validate_config(cfg: dict) -> dict:
     cfg["retention_days"] = _config_number(cfg, "retention_days", 1)
     cfg["idle_after_minutes"] = _config_number(cfg, "idle_after_minutes", 0)
 
-    if cfg.get("budget_metric") not in {"total", "billable", "output"}:
+    if not isinstance(cfg.get("budget_metric"), str) or cfg["budget_metric"] not in {
+        "total", "billable", "output"
+    }:
         cfg["budget_metric"] = DEFAULT_CONFIG["budget_metric"]
 
     raw_limits = cfg.get("limits")
@@ -215,7 +217,7 @@ def validate_config(cfg: dict) -> dict:
         raw_floors = {}
     cfg["auto_floor"] = {
         name: _positive_setting(
-            raw_floors.get(name), DEFAULT_CONFIG["auto_floor"][name]
+            raw_floors.get(name), DEFAULT_CONFIG["auto_floor"][name], allow_auto=False
         )
         for name in ("session", "week", "fable")
     }
@@ -302,7 +304,8 @@ def is_writable_dir(path: Path) -> bool:
 def resolve_output_path(cfg: dict) -> Path:
     configured = cfg.get("output_path", "auto")
     if configured and configured != "auto":
-        return Path(configured).expanduser()
+        path = Path(configured).expanduser()
+        return path if path.is_absolute() else APP_DIR / path
 
     # Native Windows: the widget and collector share the same user profile, so
     # there is no path translation or profile scan to perform.
@@ -330,31 +333,36 @@ def resolve_output_path(cfg: dict) -> Path:
     return Path.home() / ".claude-widget" / "usage.json"
 
 
-_native_loop_lock = None
+_loop_lock = None
 
 
-def acquire_native_loop_lock() -> bool:
-    """Prevent duplicate native Windows collectors from rewriting one state file."""
-    global _native_loop_lock
-    if not IS_WINDOWS:
+def acquire_loop_lock() -> bool:
+    """Serialize every state writer, whether launched by a service or manually."""
+    global _loop_lock
+    if _loop_lock is not None:
         return True
-
-    import msvcrt
 
     handle = None
     try:
         APP_DIR.mkdir(parents=True, exist_ok=True)
         handle = (APP_DIR / ".collector.lock").open("a+b")
-        if handle.seek(0, os.SEEK_END) == 0:
-            handle.write(b"\0")
-            handle.flush()
-        handle.seek(0)
-        msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        if IS_WINDOWS:
+            import msvcrt
+
+            if handle.seek(0, os.SEEK_END) == 0:
+                handle.write(b"\0")
+                handle.flush()
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError:
         if handle is not None:
             handle.close()
         return False
-    _native_loop_lock = handle
+    _loop_lock = handle
     return True
 
 
@@ -364,7 +372,7 @@ def new_state() -> dict:
         "files": {},         # path -> [size, mtime, offset]
         "hours": {},         # "<epoch_hour>" -> {"<model>|<speed>": [6 ints]}
         "recent": [],        # [ts, key, in, out, cw5, cw1h, cr]
-        "seen": {},          # requestId -> ts (dedupe window)
+        "requests": {},      # requestId -> [ts, model key, in, out, cw5, cw1h, cr, sessionId]
         "days": {},          # "YYYY-MM-DD" -> [sessionId, ...]
         "limit_events": [],  # timestamps of observed 429s
         # Claude Code's session window: 5 hours from the first message, then a
@@ -389,7 +397,7 @@ def load_state() -> dict:
                     "files": dict,
                     "hours": dict,
                     "recent": list,
-                    "seen": dict,
+                    "requests": dict,
                     "days": dict,
                     "limit_events": list,
                     "session_models": dict,
@@ -405,7 +413,11 @@ def load_state() -> dict:
                     return state
                 log("state structure is invalid; rebuilding")
                 return defaults
-            log("state schema changed; rebuilding")
+            log("state schema changed; rebuilding transcript totals")
+            rebuilt = new_state()
+            if isinstance(state.get("last_live"), dict):
+                rebuilt["last_live"] = state["last_live"]
+            return rebuilt
         except Exception as exc:
             log(f"state.json unreadable ({exc}); rebuilding")
     return new_state()
@@ -550,11 +562,9 @@ def scan(state: dict, cfg: dict, now: float) -> int:
 
     retention_cutoff = now - cfg["retention_days"] * DAY
     files = state["files"]
-    hours = state["hours"]
-    seen_persisted = state["seen"]
+    requests = state["requests"]
     limit_events = state["limit_events"]
-    seen_run: set[str] = set()
-    new_entries: list[tuple] = []
+    changed: set[str] = set()
 
     for path in sorted(PROJECTS_DIR.rglob("*.jsonl")):
         key = str(path)
@@ -620,42 +630,51 @@ def scan(state: dict, cfg: dict, now: float) -> int:
             if ts < 0 or ts > now + DAY:
                 continue
 
-            # Claude Code writes the same requestId more than once per turn.
-            if request_id in seen_run or request_id in seen_persisted:
-                continue
-            seen_run.add(request_id)
-            if ts >= now - 2 * DAY:
-                seen_persisted[request_id] = ts
-
             if ts < retention_cutoff:
                 continue
+            previous = requests.get(request_id)
+            if previous is not None:
+                # Streaming records are cumulative. Replayed partial records
+                # must not undo a final count, and updates must not add a request.
+                counts = [max(old, new) for old, new in zip(previous[2:7], counts)]
+                ts = min(ts, previous[0])
+                if state.get("session_start") == previous[0]:
+                    state["session_start"] = ts
+                model_key = previous[1]
+                session_id = previous[7] or session_id
+            entry = [ts, model_key, *counts, session_id]
+            if entry != previous:
+                requests[request_id] = entry
+                changed.add(request_id)
 
-            new_entries.append((ts, model_key, counts, session_id))
+    if changed:
+        rebuild_aggregates(state, cfg, now)
+    return len(changed)
 
-    # The session chain is order-dependent, and entries arrive interleaved
-    # across transcripts, so fold them in timestamp order rather than file order.
-    new_entries.sort(key=lambda e: e[0])
+
+def rebuild_aggregates(state: dict, cfg: dict, now: float) -> None:
+    """Derive rollups from the retained, deduplicated request ledger."""
+    state["hours"] = {}
+    state["recent"] = []
+    state["days"] = {}
+    # Preserve the established session anchor across incremental scans and
+    # retention pruning. Newly discovered older history cannot join this session.
+    anchor = state.get("session_start")
+    state["session_models"] = {}
     block_seconds = int(cfg["block_hours"] * HOUR)
+    for entry in sorted(state["requests"].values(), key=lambda e: e[0]):
+        ts, model_key = entry[:2]
+        counts, session_id = entry[2:7], entry[7]
+        bucket = state["hours"].setdefault(str(int(ts // HOUR) * HOUR), {})
+        add_into(bucket, model_key, counts + [1])
+        if ts >= now - 8 * HOUR:
+            state["recent"].append([ts, model_key, *counts])
 
-    for ts, model_key, counts, session_id in new_entries:
-        bucket = hours.setdefault(str(int(ts // HOUR) * HOUR), {})
-        agg = bucket.get(model_key)
-        if agg is None:
-            bucket[model_key] = counts + [1]
-        else:
-            for i in range(5):
-                agg[i] += counts[i]
-            agg[5] += 1
-
-        state["recent"].append([ts, model_key, *counts])
-
-        # Roll the session window when this message lands after the previous
-        # window expired. Anchored to the message timestamp, not the hour.
-        start = state.get("session_start")
-        if start is None or ts >= start + block_seconds:
-            state["session_start"] = ts
-            state["session_models"] = {}
-        add_into(state["session_models"], model_key, counts + [1])
+        if anchor is None or ts >= anchor:
+            if anchor is None or ts >= anchor + block_seconds:
+                anchor = ts
+                state["session_models"] = {}
+            add_into(state["session_models"], model_key, counts + [1])
 
         if session_id:
             day = datetime.fromtimestamp(ts, timezone.utc).astimezone().strftime("%Y-%m-%d")
@@ -663,16 +682,18 @@ def scan(state: dict, cfg: dict, now: float) -> int:
             if session_id not in sessions:
                 sessions.append(session_id)
 
-    return len(new_entries)
+    state["session_start"] = anchor
 
 
 def prune(state: dict, cfg: dict, now: float) -> None:
     retention_cutoff = now - cfg["retention_days"] * DAY
-    state["hours"] = {h: v for h, v in state["hours"].items() if int(h) >= retention_cutoff}
+    retained = {k: v for k, v in state["requests"].items() if v[0] >= retention_cutoff}
+    if len(retained) != len(state["requests"]):
+        state["requests"] = retained
+        rebuild_aggregates(state, cfg, now)
     state["recent"] = sorted(
         (e for e in state["recent"] if e[0] >= now - 8 * HOUR), key=lambda e: e[0]
     )
-    state["seen"] = {k: v for k, v in state["seen"].items() if v >= now - 2 * DAY}
     state["limit_events"] = sorted(t for t in set(state["limit_events"]) if t >= retention_cutoff)
 
     keep_days = {
@@ -780,7 +801,9 @@ def fetch_live_usage(cfg: dict, now: float) -> tuple[dict | None, str | None]:
         _live_cache["error"] = type(exc).__name__
         return None, _live_cache["error"]
 
-    if not isinstance(payload, dict):
+    if not isinstance(payload, dict) or not any(
+        live_window(payload, name, now) is not None for name in LIVE_KINDS
+    ):
         _live_cache["error"] = "invalid response"
         return None, _live_cache["error"]
 
@@ -827,6 +850,9 @@ def live_window(payload: dict | None, gauge_id: str, now: float) -> dict | None:
             pct = _percentage(entry.get("percent"))
             if pct is None:
                 continue
+            resets_in = _resets_in(entry.get("resets_at"), now)
+            if resets_in == 0:
+                continue
             label = None
             scope = entry.get("scope")
             if isinstance(scope, dict):
@@ -835,7 +861,7 @@ def live_window(payload: dict | None, gauge_id: str, now: float) -> dict | None:
                     label = str(model["display_name"]).lower()
             return {
                 "pct": pct,
-                "resets_in": _resets_in(entry.get("resets_at"), now),
+                "resets_in": resets_in,
                 "label": label,
                 "severity": entry.get("severity"),
             }
@@ -843,9 +869,12 @@ def live_window(payload: dict | None, gauge_id: str, now: float) -> dict | None:
     block = payload.get(LIVE_LEGACY_KEYS.get(gauge_id, ""))
     pct = _percentage(block.get("utilization")) if isinstance(block, dict) else None
     if isinstance(block, dict) and pct is not None:
+        resets_in = _resets_in(block.get("resets_at"), now)
+        if resets_in == 0:
+            return None
         return {
             "pct": pct,
-            "resets_in": _resets_in(block.get("resets_at"), now),
+            "resets_in": resets_in,
             "label": None,
             "severity": None,
         }
@@ -863,13 +892,18 @@ def remember_live_usage(state: dict, payload: dict, now: float,
     if previous_at >= success_at:
         return
 
-    gauges = {}
+    gauges = {
+        name: {**item, "at": item.get("at", previous_at)}
+        for name, item in (previous.get("gauges") or {}).items()
+        if name in LIVE_KINDS and isinstance(item, dict)
+    }
     for name in LIVE_KINDS:
         served = live_window(payload, name, now)
         if served is None:
             continue
         resets_in = served.get("resets_in")
         gauges[name] = {
+            "at": success_at,
             "pct": served["pct"],
             "resets_at": now + resets_in if resets_in is not None else None,
             "label": served.get("label"),
@@ -879,7 +913,7 @@ def remember_live_usage(state: dict, payload: dict, now: float,
     if gauges:
         state["last_live"] = {
             "at": success_at,
-            "plan": payload.get("subscription_type") or payload.get("plan"),
+            "plan": payload.get("subscription_type") or payload.get("plan") or previous.get("plan"),
             "gauges": gauges,
         }
 
@@ -888,11 +922,12 @@ def cached_live_window(state: dict, gauge_id: str, now: float) -> dict | None:
     """Return a last-known exact reading while it still belongs to this cycle."""
     cached = state.get("last_live") or {}
     try:
-        age = max(now - float(cached["at"]), 0.0)
-        if not math.isfinite(age):
-            return None
         item = (cached.get("gauges") or {}).get(gauge_id)
         if not isinstance(item, dict):
+            return None
+        at = float(item.get("at", cached["at"]))
+        age = max(now - at, 0.0)
+        if not math.isfinite(age):
             return None
 
         resets_at = item.get("resets_at")
@@ -913,6 +948,8 @@ def cached_live_window(state: dict, gauge_id: str, now: float) -> dict | None:
             "resets_in": resets_in,
             "label": item.get("label"),
             "severity": item.get("severity"),
+            "at": at,
+            "age_seconds": age,
         }
     except (KeyError, TypeError, ValueError, OverflowError):
         return None
@@ -979,15 +1016,27 @@ def is_fable(model_key: str, cfg: dict) -> bool:
 
 
 def window_totals(hours: dict, start: float, end: float, cfg: dict,
-                  fable_only: bool = False) -> dict[str, list[int]]:
+                  fable_only: bool = False,
+                  requests: dict | None = None) -> dict[str, list[int]]:
     out: dict[str, list[int]] = {}
     for h, per_model in hours.items():
         hour_start = int(h)
-        if start <= hour_start < end:
+        if start <= hour_start < end and (
+            requests is None or hour_start + HOUR <= end
+        ):
             for key, agg in per_model.items():
                 if fable_only and not is_fable(key, cfg):
                     continue
                 add_into(out, key, agg)
+    if requests is not None:
+        # Only boundary hours need individual timestamps. This also handles
+        # half-hour timezones and both boundaries falling inside the same hour.
+        for entry in requests.values():
+            ts, key = entry[:2]
+            hour_start = int(ts // HOUR) * HOUR
+            if start <= ts < end and (hour_start < start or hour_start + HOUR > end):
+                if not fable_only or is_fable(key, cfg):
+                    add_into(out, key, entry[2:7] + [1])
     return out
 
 
@@ -1014,10 +1063,10 @@ def week_window(now: float, cfg: dict) -> tuple[float, float, float | None]:
     """Return (start, end, seconds_until_reset). Rolling if no anchor is set."""
     anchor_raw = cfg.get("week_anchor")
     if not anchor_raw:
-        return now - WEEK, now + HOUR, None
+        return now - WEEK, now, None
     anchor = parse_timestamp(anchor_raw)
     if anchor is None:
-        return now - WEEK, now + HOUR, None
+        return now - WEEK, now, None
     periods = (now - anchor) // WEEK
     start = anchor + periods * WEEK
     end = start + WEEK
@@ -1112,8 +1161,10 @@ def compute_windows(state: dict, cfg: dict, now: float) -> dict:
         session_resets_in = None   # no window open; starts on your next message
 
     wk_start, wk_end, wk_resets = week_window(now, cfg)
-    week_models = window_totals(hours, wk_start, wk_end, cfg)
-    fable_models = window_totals(hours, wk_start, wk_end, cfg, fable_only=True)
+    week_models = window_totals(hours, wk_start, wk_end, cfg, requests=state["requests"])
+    fable_models = window_totals(
+        hours, wk_start, wk_end, cfg, fable_only=True, requests=state["requests"]
+    )
 
     return {
         "metric": metric,
@@ -1161,11 +1212,7 @@ def build_snapshot(state: dict, cfg: dict, now: float) -> dict:
         remember_live_usage(
             state, live, now, float(_live_cache["success_at"] or now)
         )
-    use_cached_live = (
-        live is None
-        and bool(live_error)
-        and cfg.get("live_sync", True)
-    )
+    use_cached_live = cfg.get("live_sync", True)
     cached_live_used = False
 
     gauges = []
@@ -1197,8 +1244,7 @@ def build_snapshot(state: dict, cfg: dict, now: float) -> dict:
             detail = "last successful account sync" if served_from_cache else "live from your account"
             cached_live_used = cached_live_used or served_from_cache
             severity = served.get("severity")
-            if served.get("resets_in") is not None:
-                resets_in = served["resets_in"]
+            resets_in = served["resets_in"]
             if served.get("label"):
                 label = served["label"]     # e.g. the tier is renamed server-side
             # Re-derive what the limit would be in our own metric, so if live
@@ -1217,6 +1263,7 @@ def build_snapshot(state: dict, cfg: dict, now: float) -> dict:
             "resets_in": resets_in,
             "source": source,
             "detail": detail,
+            "age_seconds": served.get("age_seconds") if served_from_cache else None,
             "cost_usd": round(cost, 4),
             "cost_exact": cost_exact,
             "used_label": humanize(used),
@@ -1240,7 +1287,9 @@ def build_snapshot(state: dict, cfg: dict, now: float) -> dict:
 
     # ---- today -----------------------------------------------------------
     today_start, today_end = day_bounds(now)
-    today_models = window_totals(hours, today_start, today_end, cfg)
+    today_models = window_totals(
+        hours, today_start, today_end, cfg, requests=state["requests"]
+    )
     today_totals = totals_of(today_models)
     today_cost, today_cost_exact = cost_of(today_models, now)
     today_key = datetime.fromtimestamp(now, timezone.utc).astimezone().strftime("%Y-%m-%d")
@@ -1304,7 +1353,7 @@ def build_snapshot(state: dict, cfg: dict, now: float) -> dict:
         "limit_hits_7d": len(recent_limit_hits),
         "week_anchored": bool(cfg.get("week_anchor")),
         "live": {
-            "ok": live is not None,
+            "ok": any(g["source"] == "live" for g in gauges),
             "cached": cached_live_used,
             "error": live_error,
             "plan": live_plan,
@@ -1328,7 +1377,7 @@ def run_once(state: dict, cfg: dict, output_path: Path) -> dict:
     prune(state, cfg, now)
     snapshot = build_snapshot(state, cfg, now)
     write_json_atomic(output_path, snapshot)
-    # state.json is ~0.4 MB; rewriting it every tick would be pointless churn.
+    # The retained request ledger can be several MB; skip unchanged tick writes.
     if added or now - _last_state_save > 60:
         save_state(state)
         _last_state_save = now
@@ -1340,7 +1389,8 @@ def do_calibrate(state: dict, cfg: dict, args) -> int:
     now = time.time()
     scan(state, cfg, now)
     prune(state, cfg, now)
-    save_state(state)
+    # Calibration can run alongside the daemon: use an in-memory scan and
+    # update only config.json, which the daemon reads on its next launch.
     w = compute_windows(state, cfg, now)
     metric = w["metric"]
 
@@ -1395,15 +1445,13 @@ def main() -> int:
 
     cfg = load_config()
 
-    if args.loop and not acquire_native_loop_lock():
+    if not args.calibrate and not acquire_loop_lock():
         log("another collector is already running")
         return 1
 
-    if args.rebuild and STATE_PATH.exists():
-        STATE_PATH.unlink()
-        log("state discarded; rescanning")
-
-    state = load_state()
+    # Commit rebuilt state only after a successful pass; keep the previous
+    # on-disk snapshot recoverable if the rescan fails.
+    state = new_state() if args.rebuild else load_state()
 
     if args.calibrate:
         return do_calibrate(state, cfg, args)

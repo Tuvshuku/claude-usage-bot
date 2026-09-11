@@ -13,11 +13,6 @@ trap {
     exit 1
 }
 
-$collectorPath = Join-Path $PSScriptRoot 'collector.py'
-$widgetPath = Join-Path $PSScriptRoot 'widget.ps1'
-$dataPath = Join-Path $env:USERPROFILE '.claude-widget\usage.json'
-$windowsPowerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-
 $python = Get-Command 'pythonw.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
 if (-not $python) {
     $python = Get-Command 'python.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -26,27 +21,23 @@ if (-not $python) {
     throw 'Python 3 was not found. Install it from python.org and enable "Add Python to PATH".'
 }
 
-$quotedCollector = '"{0}" --loop' -f ($collectorPath -replace '"', '\"')
-$collectorProcess = Start-Process -FilePath $python.Source -ArgumentList $quotedCollector `
-    -WindowStyle Hidden -PassThru
-Start-Sleep -Milliseconds 300
-if ($collectorProcess.HasExited) {
-    $snapshotIsFresh = (Test-Path -LiteralPath $dataPath) -and
-        (((Get-Date) - (Get-Item -LiteralPath $dataPath).LastWriteTime).TotalSeconds -lt 45)
-    if (-not $snapshotIsFresh) {
-        throw "The collector stopped during startup (exit code $($collectorProcess.ExitCode))."
-    }
+if ($CollectorOnly) {
+    $entryPath = Join-Path $PSScriptRoot 'collector.py'
+    $arguments = '"{0}" --loop' -f $entryPath
+} else {
+    # Use the same host as the executable: it resolves configuration paths,
+    # owns the writer lock, and keeps the collector alive with its widget.
+    $entryPath = Join-Path $PSScriptRoot 'native_app.py'
+    $arguments = '"{0}"' -f $entryPath
 }
 
+$hostProcess = Start-Process -FilePath $python.Source -ArgumentList $arguments `
+    -WindowStyle Hidden -PassThru
 try {
-    if ($CollectorOnly) {
-        Wait-Process -Id $collectorProcess.Id
-    } else {
-        & $windowsPowerShell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden `
-            -File $widgetPath -DataPath $dataPath -NativeMode -CollectorDataDir $PSScriptRoot
-    }
+    $hostProcess.WaitForExit()
+    exit $hostProcess.ExitCode
 } finally {
-    if ($collectorProcess -and -not $collectorProcess.HasExited) {
-        Stop-Process -Id $collectorProcess.Id -Force
+    if (-not $hostProcess.HasExited) {
+        Stop-Process -Id $hostProcess.Id -Force
     }
 }
