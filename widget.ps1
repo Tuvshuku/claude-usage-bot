@@ -26,6 +26,7 @@ $script:DataPath     = $DataPath
 $script:ExplorerPath = Join-Path $env:SystemRoot 'explorer.exe'
 $script:WslPath      = Join-Path $env:SystemRoot 'System32\wsl.exe'
 $script:Snapshot     = $null
+$script:SnapshotJson = $null
 $script:LastError    = $null
 $script:Mood         = ''
 $script:BodyHex      = ''
@@ -45,7 +46,12 @@ $script:LastX    = 0
 $script:HoverAt  = -999
 $script:EyeKind  = ''
 $script:LastHop  = 0
+$script:WalkDistance = 0.0
 $script:WakeUntil = -1       # motion tick; dragging wakes a sleeping bot briefly
+$script:MotionClock = [System.Diagnostics.Stopwatch]::StartNew()
+$script:LastMotionFrame = 0.0
+$script:WorkAreaCache = $null
+$script:WorkAreaCheckedAt = -1.0
 
 # ---------------------------------------------------------------------------
 # Palette
@@ -243,6 +249,10 @@ $script:BodyParts = @($ui.Body, $ui.ArmL, $ui.ArmR, $ui.Leg0, $ui.Leg1, $ui.Leg2
 # WinForms work area for the monitor containing this WPF window back into WPF
 # device-independent coordinates so wandering and clamping stay on that screen.
 function Get-CurrentWorkArea {
+    $now = $script:MotionClock.Elapsed.TotalSeconds
+    if ($null -ne $script:WorkAreaCache -and $now - $script:WorkAreaCheckedAt -lt 1.0) {
+        return $script:WorkAreaCache
+    }
     $fallback = [System.Windows.SystemParameters]::WorkArea
     try {
         $helper = New-Object System.Windows.Interop.WindowInteropHelper $window
@@ -255,9 +265,11 @@ function Get-CurrentWorkArea {
         $toDip = $source.CompositionTarget.TransformFromDevice
         $topLeft = $toDip.Transform((New-Object System.Windows.Point $bounds.Left, $bounds.Top))
         $bottomRight = $toDip.Transform((New-Object System.Windows.Point $bounds.Right, $bounds.Bottom))
-        return New-Object System.Windows.Rect (
+        $script:WorkAreaCache = New-Object System.Windows.Rect (
             $topLeft.X, $topLeft.Y,
             ($bottomRight.X - $topLeft.X), ($bottomRight.Y - $topLeft.Y))
+        $script:WorkAreaCheckedAt = $now
+        return $script:WorkAreaCache
     } catch {
         return $fallback
     }
@@ -413,13 +425,19 @@ for ($i = 0; $i -lt 24; $i++) {
 }
 
 function Read-Snapshot {
-    if (-not (Test-Path -LiteralPath $script:DataPath)) { return $null }
-    for ($i = 0; $i -lt 3; $i++) {
-        try {
-            $raw = Get-Content -LiteralPath $script:DataPath -Raw -ErrorAction Stop
-            if ($raw) { return $raw | ConvertFrom-Json }
-        } catch { Start-Sleep -Milliseconds 40 }
-    }
+    try {
+        # Atomic collector writes let a failed read wait for the next refresh.
+        # Never sleep/retry on the UI thread, and don't parse unchanged JSON.
+        $raw = [System.IO.File]::ReadAllText($script:DataPath)
+        if ($raw -eq $script:SnapshotJson -and $null -ne $script:Snapshot) {
+            return $script:Snapshot
+        }
+        if ($raw) {
+            $parsed = ConvertFrom-Json -InputObject $raw -ErrorAction Stop
+            $script:SnapshotJson = $raw
+            return $parsed
+        }
+    } catch { $script:LastError = $_ }
     return $null
 }
 
@@ -526,6 +544,10 @@ function Update-Widget {
         $ui.Subtitle.Text = ('{0} - {1}/min' -f $model, (Format-Tokens ([double]$snap.burn.tokens_per_min)))
     }
 
+    # The pet still gets fresh moods while walking, but a hidden dashboard
+    # doesn't need gauges, text, or 24 sparkline bars laid out every refresh.
+    if (-not $script:Open) { return }
+
     for ($i = 0; $i -lt 3; $i++) {
         $g = $null
         if ($i -lt $gauges.Count) { $g = $gauges[$i] }
@@ -577,6 +599,7 @@ function Update-Widget {
 # Motion
 # ---------------------------------------------------------------------------
 function Reset-Pose {
+    $ui.LegT0.X = 0; $ui.LegT1.X = 0; $ui.LegT2.X = 0; $ui.LegT3.X = 0
     $ui.LegT0.Y = 0; $ui.LegT1.Y = 0; $ui.LegT2.Y = 0; $ui.LegT3.Y = 0
     $ui.ArmLT.Y = 0; $ui.ArmRT.Y = 0
     $ui.BotTilt.Angle = 0
@@ -601,12 +624,47 @@ function Wake-BotFromDrag {
 function Start-Jump {
     if ($script:State -eq 'jump' -or $script:Dragging -or (Test-IsDormant)) { return }
     $script:State = 'jump'
+    Reset-Pose
     $script:JumpT = 0
     Set-Eyes 'happy'
 }
 
-function Step-Motion {
-    $script:Tick++
+function Get-MotionDelta([double]$elapsed) {
+    # Don't teleport after a suspended laptop or a delayed UI frame.
+    return [Math]::Max(0.0, [Math]::Min($elapsed, 0.05))
+}
+
+function Get-WalkTarget([double]$left, [double]$minX, [double]$maxX,
+                        [int]$direction, [double]$span) {
+    if ($maxX -le $minX) { return $minX }
+    # Turn inward near an edge instead of choosing a two-step clipped walk.
+    $room = $(if ($direction -gt 0) { $maxX - $left } else { $left - $minX })
+    $otherRoom = $(if ($direction -gt 0) { $left - $minX } else { $maxX - $left })
+    if ($room -lt [Math]::Min(180.0, $span) -and $otherRoom -gt $room) {
+        $direction = -$direction
+    }
+    return [Math]::Max($minX, [Math]::Min($maxX, $left + $direction * $span))
+}
+
+function Set-WalkPose([double]$distance) {
+    # One readable stride per 40 pixels travelled. Alternating lift and swing
+    # make the feet visibly step instead of merely changing their length.
+    $phase = ($distance % 40.0) * (2.0 * [Math]::PI / 40.0)
+    $swing = [Math]::Sin($phase)
+    $liftA = -[Math]::Max(0.0, $swing) * 6.0
+    $liftB = -[Math]::Max(0.0, -$swing) * 6.0
+    $ui.LegT0.X = $swing * 2.5; $ui.LegT3.X = $swing * 2.5
+    $ui.LegT1.X = -$swing * 2.5; $ui.LegT2.X = -$swing * 2.5
+    $ui.LegT0.Y = $liftA; $ui.LegT3.Y = $liftA
+    $ui.LegT1.Y = $liftB; $ui.LegT2.Y = $liftB
+    $ui.ArmLT.Y = $swing; $ui.ArmRT.Y = -$swing
+    $ui.BotHop.Y = -[Math]::Abs($swing) * 1.2
+}
+
+function Step-Motion([double]$deltaSeconds) {
+    # Keep behavior deadlines in virtual 30 Hz ticks, independent of frame rate.
+    $frameTicks = $deltaSeconds * 30.0
+    $script:Tick += $frameTicks
 
     # --- dragging: the OS moves the window; we just animate the flail ---
     if ($script:Dragging) {
@@ -646,25 +704,29 @@ function Step-Motion {
             $work = Get-CurrentWorkArea
             $minX = $work.Left + 4
             $maxX = $work.Right - $window.ActualWidth - 4
-            $window.Left = $window.Left + ($script:Dir * 2.4)
-            if ($window.Left -lt $minX) { $window.Left = $minX; $script:Dir = 1; $ui.BotFlip.ScaleX = 1 }
-            if ($window.Left -gt $maxX) { $window.Left = $maxX; $script:Dir = -1; $ui.BotFlip.ScaleX = -1 }
-
-            $phase = $script:Tick * 0.45
-            $s = [Math]::Sin($phase) * 3
-            $ui.LegT0.Y = $s;  $ui.LegT1.Y = -$s
-            $ui.LegT2.Y = -$s; $ui.LegT3.Y = $s
-            $ui.BotHop.Y = -[Math]::Abs([Math]::Sin($phase)) * 1.6
+            $step = $script:Dir * 72.0 * $deltaSeconds
+            $nextLeft = $window.Left + $step
+            if ($null -ne $script:TargetX) {
+                if ($script:Dir -gt 0) { $nextLeft = [Math]::Min($nextLeft, $script:TargetX) }
+                else { $nextLeft = [Math]::Max($nextLeft, $script:TargetX) }
+            }
+            if ($nextLeft -lt $minX) { $nextLeft = $minX; $script:Dir = 1; $ui.BotFlip.ScaleX = 1 }
+            if ($nextLeft -gt $maxX) { $nextLeft = $maxX; $script:Dir = -1; $ui.BotFlip.ScaleX = -1 }
+            $script:WalkDistance += [Math]::Abs($nextLeft - $window.Left)
+            # Update the pose before moving the native window, and give WPF's
+            # render work priority over the next movement callback below.
+            Set-WalkPose $script:WalkDistance
+            $window.Left = $nextLeft
 
             if (($null -ne $script:TargetX -and
-                 [Math]::Abs(($window.Left - $script:TargetX)) -lt 5) -or $script:Tick -ge $script:NextAt) {
+                 [Math]::Abs(($window.Left - $script:TargetX)) -lt 0.1) -or $script:Tick -ge $script:NextAt) {
                 $script:State = 'idle'; Reset-Pose
-                $script:NextAt = $script:Tick + (Get-Random -Minimum 30 -Maximum 90)
+                $script:NextAt = $script:Tick + (Get-Random -Minimum 30 -Maximum 55)
             }
         }
         'jump' {
-            $script:JumpT++
-            $prog = $script:JumpT / $script:JumpLen
+            $script:JumpT += $frameTicks
+            $prog = [Math]::Min(1.0, $script:JumpT / $script:JumpLen)
             $arc = [Math]::Sin([Math]::PI * $prog)
             $ui.BotHop.Y = -26 * $arc
             $ui.LegT0.Y = 3 * $arc; $ui.LegT1.Y = 3 * $arc
@@ -691,17 +753,18 @@ function Step-Motion {
                 $minX = $work.Left + 4
                 $maxX = $work.Right - $window.ActualWidth - 4
                 $roll = Get-Random -Minimum 0 -Maximum 100
-                if ($roll -lt 25) {
+                if ($roll -lt 10) {
                     Start-Jump
-                } elseif ($roll -lt 80) {
-                    $span = Get-Random -Minimum 70 -Maximum 280
+                } elseif ($roll -lt 90) {
+                    $span = Get-Random -Minimum 320 -Maximum 680
                     $dir = 1
                     if ((Get-Random -Minimum 0 -Maximum 2) -eq 0) { $dir = -1 }
-                    $script:TargetX = [Math]::Max($minX, [Math]::Min($maxX, ($window.Left + ($dir * $span))))
+                    $script:TargetX = Get-WalkTarget $window.Left $minX $maxX $dir $span
                     if ($script:TargetX -lt $window.Left) { $script:Dir = -1; $ui.BotFlip.ScaleX = -1 }
                     else { $script:Dir = 1; $ui.BotFlip.ScaleX = 1 }
                     $script:State = 'walk'
-                    $script:NextAt = $script:Tick + 130
+                    $script:WalkDistance = 0.0
+                    $script:NextAt = $script:Tick + 360
                 } else {
                     $script:NextAt = $script:Tick + (Get-Random -Minimum 40 -Maximum 120)
                 }
@@ -796,9 +859,11 @@ $ui.Root.Add_MouseLeftButtonDown({
     $startT = $window.Top
     $script:LastX = $window.Left
     $script:Dragging = $true
+    Reset-Pose
     Set-Eyes 'happy'
     try { $window.DragMove() } catch { $script:LastError = $_ }
     $script:Dragging = $false
+    $script:WorkAreaCache = $null
 
     Reset-Pose
     $moved = [Math]::Abs(($window.Left - $startL)) + [Math]::Abs(($window.Top - $startT))
@@ -884,10 +949,20 @@ $window.Add_Loaded({
     Update-Widget
 })
 $window.Add_Closing({ Save-Settings })
+$window.Add_Closed({ $motionTimer.Stop(); $dataTimer.Stop() })
 
-$motionTimer = New-Object System.Windows.Threading.DispatcherTimer
-$motionTimer.Interval = [TimeSpan]::FromMilliseconds(33)
-$motionTimer.Add_Tick({ try { Step-Motion } catch { $script:LastError = $_ } })
+# Rendering must outrank movement; otherwise the window can keep moving with
+# an old leg bitmap while repeated motion callbacks compete with WPF painting.
+$motionTimer = New-Object System.Windows.Threading.DispatcherTimer ([System.Windows.Threading.DispatcherPriority]::Background)
+# Request below one Windows timer quantum: a 16 ms request can be rounded to
+# roughly 31 ms. Elapsed-time motion keeps speed unchanged at either cadence.
+$motionTimer.Interval = [TimeSpan]::FromMilliseconds(8)
+$motionTimer.Add_Tick({
+    $now = $script:MotionClock.Elapsed.TotalSeconds
+    $delta = Get-MotionDelta ($now - $script:LastMotionFrame)
+    $script:LastMotionFrame = $now
+    try { Step-Motion $delta } catch { $script:LastError = $_ }
+})
 $motionTimer.Start()
 
 $dataTimer = New-Object System.Windows.Threading.DispatcherTimer

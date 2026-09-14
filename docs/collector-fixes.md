@@ -2,6 +2,18 @@
 
 ## Unreleased reliability fixes
 
+- Walking and jumping advance with elapsed time rather than callback counts,
+  with an 8 ms timer request (to avoid a coarse 16 ms request being rounded to
+  roughly 31 ms on Windows) and capped catch-up after a delayed frame.
+  Walks target 320–679 pixels when the screen has room, with shorter rests and
+  inward turns near screen edges. Monitor bounds are cached for up to one second
+  and refreshed immediately after dragging. Hidden dashboard rendering and
+  unchanged JSON parsing are skipped; failed reads no longer sleep on the UI
+  thread. Reopen the updated widget to use these animation changes.
+- The gait follows distance travelled, with alternating six-pixel foot lifts
+  and a small forward/back stride. Movement callbacks run below WPF rendering
+  priority so leg painting is not competing with position updates. Dragging,
+  jumping, and resting clear the walking transforms.
 - Snapshots include the configured refresh interval. The widget waits at least
   two intervals plus 15 seconds (minimum 45 seconds) before showing offline.
   Older snapshots retain the 45-second timeout.
