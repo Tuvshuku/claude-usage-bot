@@ -1,11 +1,33 @@
-# claude-usage-bot
+# Claude Usage Bot
 
-## Introduction
+[![CI](https://github.com/Tuvshuku/claude-usage-bot/actions/workflows/ci.yml/badge.svg)](https://github.com/Tuvshuku/claude-usage-bot/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/Tuvshuku/claude-usage-bot?display_name=tag&sort=semver)](https://github.com/Tuvshuku/claude-usage-bot/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/Tuvshuku/claude-usage-bot/total)](https://github.com/Tuvshuku/claude-usage-bot/releases)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-claude-usage-bot is a small, open-source usage monitor for Claude Code. It
-supports native Windows and WSL setups, plus a headless collector for macOS and
-Linux. A pixel bot lives above your Windows desktop and opens an at-a-glance
-usage dashboard when clicked.
+### Your usage, with a little personality.
+
+A tiny desktop pet that keeps your **Claude Code usage** in view. It wanders,
+it naps, and it opens your dashboard with a click. Warm orange when there's
+room to work; red as your usage climbs.
+
+**[Download for Windows ↓](https://github.com/Tuvshuku/claude-usage-bot/releases/latest/download/ClaudeUsageBot.exe)**
+&nbsp; · &nbsp; **[Meet the bot ↗](https://tuvshuku.github.io/claude-usage-bot/)**
+&nbsp; · &nbsp; [WSL setup](#wsl)
+&nbsp; · &nbsp; [How it works](#using-it)
+&nbsp; · &nbsp; [What's new](docs/collector-fixes.md)
+
+Free and open source · Windows 10 / 11 · No Python required for the executable
+
+<p align="center">
+  <a href="https://tuvshuku.github.io/claude-usage-bot/"><img src="docs/images/launch-card.png" alt="Claude Usage Bot: Big coding days. Little desktop friend. A preview of the pixel pet and usage dashboard." width="100%"></a>
+</p>
+
+#### See it on the desktop
+
+<p align="center">
+  <a href="docs/images/demo.gif"><img src="docs/images/demo.gif" alt="Claude Usage Bot opening its dashboard on a Windows coding desktop" width="900"></a>
+</p>
 
 It tracks the same three windows shown by Claude Code's `/usage` command:
 
@@ -235,7 +257,8 @@ python3 collector.py --calibrate --session 21 --week 58 --fable 4
 ```
 
 That divides your measured token totals by those percentages, writes the derived
-limits into `config.json`, and the `~` disappears. WSL mode also provides a
+limits into `config.json`. The `~` stays visible because calibrated local
+percentages are still estimates. WSL mode also provides a
 **Calibrate limits…** item in the widget's right-click menu.
 
 Two tips:
@@ -330,16 +353,19 @@ python3 collector.py --rebuild     # throw away state.json and rescan from disk
 python3 collector.py --calibrate   # show window totals; add --session/--week/--fable to save limits
 ```
 
-`state.json` holds per-file read cursors plus an hourly rollup, so passes after
-the first only read newly appended bytes — a cold scan of ~1,700 transcripts
-takes about two seconds, and each incremental pass about 0.15s.
+`state.json` holds per-file read cursors, retained request counts, and an hourly
+rollup. Passes after the first read newly appended bytes; updated streaming
+counts are reconciled against the stored request. State size and scan time
+depend on the amount of retained history. Schema 5 rebuilds transcript totals
+on the first launch after upgrading; see the [upgrade notes](docs/collector-fixes.md).
 
 ## Implementation notes
 
-- **Deduplication.** Claude Code writes the same `requestId` more than once per
-  turn (streaming iterations land as repeated lines). Counting raw lines roughly
-  doubles every figure, so entries are deduped by `requestId`, with a 48-hour id
-  window persisted across runs.
+- **Streaming updates and deduplication.** Claude Code writes the same `requestId`
+  more than once per turn, sometimes with larger cumulative token counts.
+  Each request is counted once and revised counts update its totals. The request
+  ledger lasts for the full retention window, so copied history is deduplicated
+  across runs too.
 - **Model IDs are normalized.** Context variants (`claude-opus-5[1m]`) and dated
   snapshots (`claude-haiku-4-5-20251001`) are folded onto their base id —
   otherwise the dated ones miss the pricing table and silently fall back to
@@ -360,8 +386,8 @@ takes about two seconds, and each incremental pass about 0.15s.
   12:00 and reported an empty session while `/usage` still showed 24% used with
   2h11m left. Because the chain is order-dependent, entries from all transcripts
   are sorted by timestamp before being folded in, not processed file by file.
-- **Weekly windows are hour-aligned**, so the hourly rollup measures them
-  exactly once `week_anchor` is set.
+- **Window boundaries use timestamps.** The hourly rollup handles complete
+  hours; individual requests handle partial hours at daily and weekly boundaries.
 - Only the Python standard library and stock WPF are used. Nothing to install.
 
 ### Two PowerShell traps worth remembering
@@ -421,6 +447,14 @@ Measured cost per frame: **0.17 ms** while dragging, 0.33 ms idle, against a
 | `install.sh` | WSL | Copies the Windows half, optional autostart |
 | `widget.ps1` | Windows | The WPF card |
 | `Start-Widget.vbs` | Windows | Wakes WSL, launches the widget with no console |
+
+## Share the little bot
+
+The [launch kit](docs/launch-kit.md) includes a short demo, social artwork, post
+drafts, and a first-user checklist. Preview the interactive landing page locally
+with `python3 -m http.server 8765 --directory docs`, then visit
+`http://localhost:8765`. The browser demo uses example data and does not connect
+to an account.
 
 ## License
 

@@ -1,0 +1,414 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f8f5ee" />
+    <title>Claude Usage Bot — Your usage, with a little personality.</title>
+    <meta
+      name="description"
+      content="A tiny desktop pet that keeps your Claude Code usage in view. Click for your dashboard. Free and open source for Windows, with WSL support."
+    />
+    <meta property="og:type" content="website" />
+    <meta
+      property="og:title"
+      content="Your usage, with a little personality."
+    />
+    <meta
+      property="og:description"
+      content="Meet the tiny desktop companion for Claude Code. Free, open source, Windows + WSL."
+    />
+    <meta
+      property="og:image"
+      content="https://tuvshuku.github.io/claude-usage-bot/images/launch-card.png"
+    />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="icon" href="images/pet.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="site.css" />
+    <script src="site.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <svg
+      class="svg-library"
+      aria-hidden="true"
+      xmlns="http://www.w3.org/2000/svg"
+    >
+      <symbol id="pet-shape" viewBox="0 0 112 108">
+        <g fill="currentColor">
+          <path
+            d="M23 77h5v13h-5zM31 77h5v13h-5zM67 77h5v13h-5zM75 77h5v13h-5z"
+          />
+          <path d="M4 53h13v13H4zM92 53h13v13H92zM17 27h75v50H17z" />
+        </g>
+        <g fill="#35221b">
+          <path class="normal-eyes" d="M31 39h5v13h-5zM73 39h5v13h-5z" />
+          <path class="sleep-eyes" d="M29 48h11v3H29zM69 48h11v3H69z" />
+        </g>
+      </symbol>
+    </svg>
+    <div class="page-shell">
+      <header class="site-header">
+        <a class="brand" href="#" aria-label="Claude Usage Bot home"
+          ><svg viewBox="0 0 112 108" aria-hidden="true">
+            <use href="#pet-shape" /></svg
+          ><span>claude usage bot<span class="brand-dot">.</span></span></a
+        >
+        <nav aria-label="Main navigation">
+          <a href="#how-it-works">Meet the bot</a
+          ><a href="#install">Get started</a
+          ><a
+            class="source-link"
+            href="https://github.com/Tuvshuku/claude-usage-bot"
+            >Source code <span aria-hidden="true">↗</span></a
+          >
+        </nav>
+      </header>
+      <main id="main">
+        <section class="hero" aria-labelledby="hero-title">
+          <div class="hero-copy">
+            <p class="eyebrow">
+              <span class="status-dot"></span> A DESKTOP COMPANION FOR CLAUDE
+              CODE
+            </p>
+            <h1 id="hero-title">
+              Big coding days.<br /><em>Little desktop friend.</em>
+            </h1>
+            <p class="hero-description">
+              A tiny pixel pet that keeps your usage in view.<br
+                class="desktop-break"
+              />
+              It wanders. It naps. It opens your dashboard with a click.
+            </p>
+            <div class="hero-actions">
+              <a
+                class="button primary"
+                href="https://github.com/Tuvshuku/claude-usage-bot/releases/latest/download/ClaudeUsageBot.exe"
+                ><svg viewBox="0 0 20 20" aria-hidden="true">
+                  <path
+                    d="M3 4l6-1v6H3zm8-1l6-1v7h-6zM3 11h6v6l-6-1zm8 0h6v7l-6-1z"
+                    fill="currentColor"
+                  />
+                </svg>
+                Download for Windows <span aria-hidden="true">↓</span></a
+              ><a class="text-link" href="#install"
+                >Using WSL? <span aria-hidden="true">↗</span></a
+              >
+            </div>
+            <p class="small-print">
+              Free & open source. No separate account.<br />Native Windows app ·
+              WSL collector supported
+            </p>
+          </div>
+          <div class="demo-wrap">
+            <div class="desktop-demo" id="demo" data-mood="happy">
+              <div class="demo-topbar">
+                <span class="window-dots" aria-hidden="true"
+                  ><i></i><i></i><i></i></span
+                ><span>your little corner of the desktop</span
+                ><span aria-hidden="true">⊞</span>
+              </div>
+              <div class="demo-scene">
+                <div class="editor" aria-hidden="true">
+                  <div class="editor-tab">
+                    <span class="file-dot"></span> a-good-day.ts <span>×</span>
+                  </div>
+                  <div class="editor-code">
+                    <span class="line-no">01</span>
+                    <span class="code-muted"
+                      >// a little company while you build</span
+                    ><br /><span class="line-no">02</span>
+                    <span class="code-pink">const</span> today = {<br /><span
+                      class="line-no"
+                      >03</span
+                    >
+                    &nbsp; coffee:
+                    <span class="code-green">'warm'</span>,<br /><span
+                      class="line-no"
+                      >04</span
+                    >
+                    &nbsp; ideas:
+                    <span class="code-green">'plenty'</span>,<br /><span
+                      class="line-no"
+                      >05</span
+                    >
+                    &nbsp; company: <span class="code-green">'a tiny bot'</span
+                    ><br /><span class="line-no">06</span> };<br /><span
+                      class="line-no"
+                      >07</span
+                    ><br /><span class="line-no">08</span>
+                    <span class="code-pink">await</span>
+                    buildSomethingNice();<span class="cursor">▍</span>
+                  </div>
+                  <div class="editor-bottom">
+                    <span>main*</span><span>one thing at a time</span>
+                  </div>
+                </div>
+                <div class="pet-station">
+                  <span class="pet-note" id="pet-note">psst. click me.</span>
+                  <button
+                    class="demo-pet"
+                    id="demo-pet"
+                    aria-label="Open example usage dashboard"
+                    aria-expanded="false"
+                    aria-controls="demo-dashboard"
+                  >
+                    <span class="sleep-z" aria-hidden="true">z z</span
+                    ><svg viewBox="0 0 112 108" aria-hidden="true">
+                      <use href="#pet-shape" /></svg
+                    ><span class="pet-shadow" aria-hidden="true"></span>
+                  </button>
+                </div>
+                <div class="usage-card" id="demo-dashboard" hidden>
+                  <div class="card-heading">
+                    <div>
+                      <strong>claude code</strong
+                      ><span id="demo-subtitle"
+                        >a little room to keep creating</span
+                      >
+                    </div>
+                    <span class="card-status" id="demo-status">active</span>
+                  </div>
+                  <div class="gauge-row">
+                    <span>session</span
+                    ><span class="gauge-track"><i id="session-fill"></i></span
+                    ><strong id="session-percent">32%</strong
+                    ><small>2h 14m</small>
+                  </div>
+                  <div class="gauge-row">
+                    <span>week</span
+                    ><span class="gauge-track"><i id="week-fill"></i></span
+                    ><strong id="week-percent">46%</strong><small>3d 8h</small>
+                  </div>
+                  <div class="gauge-row">
+                    <span>fable</span
+                    ><span class="gauge-track"><i id="fable-fill"></i></span
+                    ><strong id="fable-percent">12%</strong><small>3d 8h</small>
+                  </div>
+                  <div class="sparkline" aria-hidden="true">
+                    <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i
+                    ><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i
+                    ><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+                  </div>
+                  <div class="card-footer">
+                    <span
+                      >today <strong id="demo-tokens">1.2M</strong> · 3
+                      sessions</span
+                    ><span>example data</span>
+                  </div>
+                </div>
+                <div class="desktop-caption">
+                  <span class="tiny-star" aria-hidden="true">✳</span> less
+                  checking. more making.
+                </div>
+              </div>
+              <div class="demo-controls" role="group" aria-label="Try a mood">
+                <button type="button" data-scene="happy" aria-pressed="true">
+                  <span>●</span> In the zone</button
+                ><button type="button" data-scene="hot" aria-pressed="false">
+                  <span>●</span> Near the limit</button
+                ><button type="button" data-scene="sleep" aria-pressed="false">
+                  <span>●</span> Taking a break
+                </button>
+              </div>
+            </div>
+            <p class="demo-disclaimer">
+              Interactive preview · example data, no account connection
+            </p>
+            <noscript
+              ><p class="no-script">
+                Enable JavaScript to try the pet, or
+                <a href="images/bot-dashboard.png"
+                  >see the desktop app screenshot</a
+                >.
+              </p></noscript
+            >
+          </div>
+        </section>
+        <div class="promise-strip" aria-label="At a glance">
+          <span><b>01</b> A little personality</span
+          ><span><b>02</b> Your usage at a glance</span
+          ><span><b>03</b> An open-source companion</span>
+        </div>
+        <section
+          class="meet-section"
+          id="how-it-works"
+          aria-labelledby="meet-title"
+        >
+          <div class="section-intro">
+            <p class="eyebrow">SMALL BOT. USEFUL COMPANY.</p>
+            <h2 id="meet-title">It fits right into<br />your flow.</h2>
+          </div>
+          <div class="feature-list">
+            <article>
+              <span class="feature-number">01 /</span>
+              <div>
+                <h3>A dashboard, one click away.</h3>
+                <p>
+                  Check your session and weekly usage, reset times, and local
+                  activity. Then fold it away and get back to your next good
+                  idea.
+                </p>
+              </div>
+            </article>
+            <article>
+              <span class="feature-number">02 /</span>
+              <div>
+                <h3>A mood for every coding day.</h3>
+                <p>
+                  Warm orange when there’s room to work. Red as usage climbs.
+                  Sleepy after a quiet spell. Hover for a hop, or let it wander.
+                </p>
+              </div>
+            </article>
+            <article>
+              <span class="feature-number">03 /</span>
+              <div>
+                <h3>Clear about where numbers come from.</h3>
+                <p>
+                  Live sync reads your account usage. Saved readings get an
+                  asterisk; local estimates get a tilde. The source code is
+                  yours to inspect.
+                </p>
+              </div>
+            </article>
+          </div>
+        </section>
+        <section
+          class="install-section"
+          id="install"
+          aria-labelledby="install-title"
+        >
+          <div class="install-heading">
+            <p class="eyebrow">MAKE A LITTLE ROOM ON YOUR DESKTOP</p>
+            <h2 id="install-title">Bring your bot home.</h2>
+            <p>Choose where you run Claude Code.</p>
+          </div>
+          <div class="install-grid">
+            <article class="install-card featured">
+              <div class="install-card-top">
+                <span class="platform-icon" aria-hidden="true">⊞</span
+                ><span class="tag">SIMPLEST SETUP</span>
+              </div>
+              <h3>Claude Code on Windows</h3>
+              <p>
+                Download the standalone app and open it. Python and WSL aren’t
+                required. Claude Code should already be signed in on Windows.
+              </p>
+              <a
+                class="button primary"
+                href="https://github.com/Tuvshuku/claude-usage-bot/releases/latest/download/ClaudeUsageBot.exe"
+                >Download the app <span aria-hidden="true">↓</span></a
+              ><small
+                >Windows 10 / 11. The app is unsigned, so Windows may show a
+                SmartScreen warning.</small
+              >
+            </article>
+            <article class="install-card">
+              <div class="install-card-top">
+                <span class="platform-icon terminal-icon" aria-hidden="true"
+                  >&gt;_</span
+                ><span class="tag subtle">WSL SETUP</span>
+              </div>
+              <h3>Claude Code inside WSL</h3>
+              <p>
+                Run the collector where your Claude data lives. The bot stays on
+                your Windows desktop.
+              </p>
+              <div class="command-box">
+                <pre id="install-command">
+git clone https://github.com/Tuvshuku/claude-usage-bot.git
+cd claude-usage-bot
+./install.sh --service --autostart</pre>
+                <button
+                  type="button"
+                  id="copy-command"
+                  aria-label="Copy WSL install commands"
+                >
+                  Copy
+                </button>
+              </div>
+              <a
+                class="text-link"
+                href="https://github.com/Tuvshuku/claude-usage-bot#installation"
+                >Full setup instructions <span aria-hidden="true">↗</span></a
+              >
+            </article>
+          </div>
+          <p class="install-note">
+            Use the setup that matches your Claude data. Run one collector at a
+            time.<br />On macOS or Linux? The
+            <a
+              href="https://github.com/Tuvshuku/claude-usage-bot#macos-and-linux--collector-only"
+              >headless collector</a
+            >
+            works there too; the desktop pet is Windows-only.
+          </p>
+          <p id="copy-status" class="sr-only" aria-live="polite"></p>
+        </section>
+        <section class="faq-section" aria-labelledby="faq-title">
+          <div>
+            <p class="eyebrow">A FEW THINGS TO KNOW</p>
+            <h2 id="faq-title">Small print.<br />Plain answers.</h2>
+          </div>
+          <div class="faq-list">
+            <details>
+              <summary>Does it need access to my account?</summary>
+              <p>
+                Optional live sync reads the OAuth credential that Claude Code
+                already stores and sends it directly to Anthropic’s usage
+                endpoint. It reads usage metadata; it does not make model
+                requests. Set <code>"live_sync": false</code> to use local
+                estimates only.
+              </p>
+            </details>
+            <details>
+              <summary>Does it show my actual bill?</summary>
+              <p>
+                The dollar figure is an API-equivalent estimate based on local
+                tokens, not your subscription bill. Live percentages include
+                account activity; local activity and cost statistics cover this
+                machine.
+              </p>
+            </details>
+            <details>
+              <summary>Can I make the bot stay still?</summary>
+              <p>
+                Yes. Right-click and turn off “Let it wander.” You can also drag
+                it to a favourite spot. Its position and movement preference are
+                remembered.
+              </p>
+            </details>
+            <details>
+              <summary>Is this an official Anthropic app?</summary>
+              <p>
+                No. This is an independent, MIT-licensed open-source project.
+                Claude and Claude Code are names used to describe the service it
+                works with.
+              </p>
+            </details>
+          </div>
+        </section>
+        <section class="closing">
+          <svg viewBox="0 0 112 108" aria-hidden="true">
+            <use href="#pet-shape" />
+          </svg>
+          <h2>Good company.<br />For your next good idea.</h2>
+          <a
+            class="text-link"
+            href="https://github.com/Tuvshuku/claude-usage-bot"
+            >Meet the project on GitHub <span aria-hidden="true">↗</span></a
+          >
+        </section>
+      </main>
+      <footer class="site-footer">
+        <span>claude usage bot<span class="brand-dot">.</span></span
+        ><span>Made for a little more joy at your desk.</span
+        ><a
+          href="https://github.com/Tuvshuku/claude-usage-bot/blob/main/LICENSE"
+          >MIT license ↗</a
+        >
+      </footer>
+    </div>
+  </body>
+</html>
