@@ -1,5 +1,18 @@
 # Collector and launcher fixes
 
+## Unreleased reliability fixes
+
+- Snapshots include the configured refresh interval. The widget waits at least
+  two intervals plus 15 seconds (minimum 45 seconds) before showing offline.
+  Older snapshots retain the 45-second timeout.
+- The native launcher reports a nonzero widget exit instead of silently returning
+  success. Closing the widget normally still exits without an error.
+- WSL calibration uses the installation directory and distribution recorded by
+  the installer, including paths with spaces, rather than guessing a folder.
+  Re-run `./install.sh` with your usual service/autostart flags and reopen the
+  installed `Start-Widget.vbs` to apply this launcher change. An unconfigured
+  widget now explains how to configure calibration instead of guessing.
+
 ## Updating an existing installation
 
 Restart the collector after updating the source. State schema 5 rebuilds local

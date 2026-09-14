@@ -6,6 +6,7 @@
 Const DISTRO = "__WSL_DISTRO__"
 Const WIDGET_PATH = "__WIDGET_PATH__"
 Const DATA_PATH = "__DATA_PATH__"
+Const CALIBRATION_COMMAND = "__CALIBRATION_COMMAND__"
 
 Dim fso, shell, here, ps1, data, target, windowsDir, wsl, powershell
 Set fso = CreateObject("Scripting.FileSystemObject")
@@ -36,4 +37,8 @@ End If
 shell.Run target, 0, False
 On Error GoTo 0
 
-shell.Run """" & powershell & """ -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File """ & ps1 & """ -DataPath """ & data & """", 0, False
+target = """" & powershell & """ -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File """ & ps1 & """ -DataPath """ & data & """"
+If Len(CALIBRATION_COMMAND) > 0 And Left(CALIBRATION_COMMAND, 2) <> "__" Then
+    target = target & " -WslCalibrationCommand " & CALIBRATION_COMMAND
+End If
+shell.Run target, 0, False

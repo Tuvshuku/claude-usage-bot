@@ -9,7 +9,8 @@
 param(
     [string]$DataPath = "$env:USERPROFILE\.claude-widget\usage.json",
     [switch]$NativeMode,
-    [string]$CollectorDataDir = ''
+    [string]$CollectorDataDir = '',
+    [string]$WslCalibrationCommand = ''
 )
 
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Xaml
@@ -453,6 +454,17 @@ function Set-Gauge([int]$i, $g, $accent, [double]$elapsed = 0) {
     else                         { $resTb.Text = 'rolling' }
 }
 
+function Get-SnapshotStaleAfter($snapshot) {
+    # Older snapshots have no interval. Keep the original grace period for them.
+    $interval = 0.0
+    if ([double]::TryParse([string]$snapshot.refresh_interval_seconds, [ref]$interval) -and
+        -not [double]::IsNaN($interval) -and -not [double]::IsInfinity($interval) -and
+        $interval -ge 1) {
+        return [Math]::Max(45.0, $interval * 2 + 15)
+    }
+    return 45.0
+}
+
 function Update-Widget {
     $snap = Read-Snapshot
     if ($snap) { $script:Snapshot = $snap }
@@ -472,7 +484,7 @@ function Update-Widget {
     $now = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() / 1000.0
     $age = $now - [double]$snap.generated_at
     if ($age -lt 0) { $age = 0 }
-    $stale = $age -gt 45
+    $stale = $age -gt (Get-SnapshotStaleAfter $snap)
 
     $gauges = @($snap.gauges)
     $session = $gauges | Where-Object { $_.id -eq 'session' } | Select-Object -First 1
@@ -842,8 +854,15 @@ if ($NativeMode) {
     } | Out-Null
 } else {
     Add-MenuItem 'Calibrate limits...' {
-        Start-Process $script:WslPath -ArgumentList @('--', 'bash', '-lc',
-            'if [ -d ~/claude-usage-bot ]; then cd ~/claude-usage-bot; else cd ~/cute.app; fi && python3 collector.py --calibrate; echo; read -p "press enter to close"')
+        if (-not $WslCalibrationCommand) {
+            [System.Windows.MessageBox]::Show(
+                'Run ./install.sh from your WSL project folder, then reopen the installed launcher to configure calibration.',
+                'Claude Usage Bot'
+            ) | Out-Null
+            return
+        }
+        $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+        Start-Process $powershell -ArgumentList @('-NoProfile', '-EncodedCommand', $WslCalibrationCommand)
     } | Out-Null
 }
 Add-MenuItem 'Open data folder' { Start-Process $script:ExplorerPath (Split-Path $script:DataPath -Parent) } | Out-Null

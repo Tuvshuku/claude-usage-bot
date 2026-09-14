@@ -62,14 +62,15 @@ esac
 WIN_DIR="$(wslpath -w "$TARGET_DIR")"
 WIN_DATA="$(wslpath -w "$DATA_PATH")"
 # Absolute paths keep the same launcher usable beside the widget and in Startup.
-python3 - "$DISTRO" "$WIN_DIR" "$WIN_DATA" "$TARGET_DIR/Start-Widget.vbs" <<'PY'
+python3 - "$DISTRO" "$WIN_DIR" "$WIN_DATA" "$TARGET_DIR/Start-Widget.vbs" "$APP_DIR" <<'PY'
 import sys
 from pathlib import Path
 from launcher_config import render_wsl_launcher
 
-distro, widget_dir, data, destination = sys.argv[1:]
+distro, widget_dir, data, destination, collector_dir = sys.argv[1:]
 Path(destination).write_text(render_wsl_launcher(
-    Path("Start-Widget.vbs").read_text(), distro, widget_dir + "\\widget.ps1", data
+    Path("Start-Widget.vbs").read_text(), distro, widget_dir + "\\widget.ps1", data,
+    collector_dir
 ), encoding="utf-16")
 PY
 echo "copied       : widget.ps1, Start-Widget.vbs (distro: ${DISTRO:-<default>})"

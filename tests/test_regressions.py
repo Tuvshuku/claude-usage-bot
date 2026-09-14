@@ -1,3 +1,4 @@
+import base64
 import copy
 import json
 import os
@@ -63,6 +64,12 @@ class TranscriptRegressionTests(unittest.TestCase):
         self.assertEqual(snap["burn"]["tokens_per_min"], 10.5)
         self.assertEqual(sum(snap["sparkline"]), 315)
         self.assertEqual(snap["today"]["cost_usd"], round(315 * 25 / 1e6, 4))
+
+    def test_snapshot_advertises_configured_refresh_interval(self):
+        for interval in (5, 60, 120):
+            self.cfg["interval_seconds"] = interval
+            snap = collector.build_snapshot(self.state, self.cfg, NOW)
+            self.assertEqual(snap["refresh_interval_seconds"], interval)
 
     def test_update_after_restart_and_replayed_partial_do_not_duplicate(self):
         first = record("a", NOW - 60, 7)
@@ -277,6 +284,24 @@ class ConfigurationAndLockTests(unittest.TestCase):
 
 
 class LauncherTests(unittest.TestCase):
+    def test_calibration_preserves_install_path_and_distribution(self):
+        for distro in ("", "Ubuntu-24.04"):
+            directory = '/home/test/사용자 project\'s "quoted" $folder'
+            rendered = render_wsl_launcher(
+                "__CALIBRATION_COMMAND__", distro, "widget", "data", directory
+            )
+            script = base64.b64decode(rendered).decode("utf-16le")
+            args = (["--distribution", distro] if distro else []) + [
+                "--cd", directory, "--exec", "python3", "collector.py", "--calibrate",
+            ]
+            expected = subprocess.list2cmdline(args).replace("'", "''")
+            self.assertIn(f"-ArgumentList '{expected}'", script)
+            self.assertIn("Read-Host", script)
+            self.assertNotIn("bash", script)
+
+    def test_unconfigured_launcher_has_no_calibration_command(self):
+        self.assertEqual(render_wsl_launcher("__CALIBRATION_COMMAND__", "", "", ""), "")
+
     def test_installed_launcher_uses_absolute_paths_when_copied_to_startup(self):
         template = (collector.SOURCE_DIR / "Start-Widget.vbs").read_text()
         widget = r"C:\Users\Test User\custom folder\widget.ps1"
@@ -293,7 +318,7 @@ class LauncherTests(unittest.TestCase):
     @unittest.skipUnless(os.name == "nt", "requires Windows Script Host")
     def test_rendered_launcher_compiles_in_windows_script_host(self):
         template = (collector.SOURCE_DIR / "Start-Widget.vbs").read_text()
-        rendered = render_wsl_launcher(template, "Ubuntu", r"C:\사용자\widget.ps1", r"D:\custom data\usage.json")
+        rendered = render_wsl_launcher(template, "Ubuntu", r"C:\사용자\widget.ps1", r"D:\custom data\usage.json", "/home/test/custom project")
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "launcher.vbs"
             # WSH compiles the whole script before execution. Exit immediately

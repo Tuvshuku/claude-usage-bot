@@ -90,7 +90,7 @@ def main() -> int:
 
     next_pass = time.monotonic() + interval
     try:
-        while widget_process.poll() is None:
+        while (exit_code := widget_process.poll()) is None:
             remaining = next_pass - time.monotonic()
             if remaining > 0:
                 time.sleep(min(remaining, 0.25))
@@ -102,6 +102,14 @@ def main() -> int:
             next_pass = time.monotonic() + interval
     except KeyboardInterrupt:
         widget_process.terminate()
+        return 0
+    if exit_code != 0:
+        show_error(
+            f"The desktop widget stopped unexpectedly (exit code {exit_code}).\n\n"
+            "Try reopening Claude Usage Bot. If this keeps happening, run "
+            "widget.ps1 in PowerShell to see the underlying error."
+        )
+        return 1
     return 0
 
 

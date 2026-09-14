@@ -1333,6 +1333,7 @@ def build_snapshot(state: dict, cfg: dict, now: float) -> dict:
     return {
         "schema": 2,
         "generated_at": now,
+        "refresh_interval_seconds": cfg["interval_seconds"],
         "metric": metric,
         "status": status,
         "idle_seconds": round(idle_seconds) if idle_seconds is not None else None,

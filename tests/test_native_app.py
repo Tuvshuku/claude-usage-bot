@@ -9,6 +9,26 @@ import native_app
 
 
 class NativeLauncherTests(unittest.TestCase):
+    def test_widget_failure_is_reported_but_normal_exit_is_not(self):
+        for child_code in (0, 1, 42):
+            with self.subTest(child_code=child_code), patch.object(
+                native_app, "os", types.SimpleNamespace(name="nt")
+            ), patch.object(native_app.collector, "acquire_loop_lock", return_value=True), patch.object(
+                native_app, "install_example_config"
+            ), patch.object(native_app.collector, "load_config", return_value={"interval_seconds": 5}), patch.object(
+                native_app.collector, "resolve_output_path"
+            ), patch.object(native_app.collector, "load_state", return_value={}), patch.object(
+                native_app.collector, "run_once"
+            ), patch.object(native_app, "launch_widget") as launch, patch.object(
+                native_app, "show_error"
+            ) as error:
+                launch.return_value.poll.return_value = child_code
+                self.assertEqual(native_app.main(), int(child_code != 0))
+                if child_code:
+                    self.assertIn(f"exit code {child_code}", error.call_args.args[0])
+                else:
+                    error.assert_not_called()
+
     def test_host_passes_configured_output_to_collector_and_widget(self):
         with tempfile.TemporaryDirectory() as tmp, patch.object(
             native_app, "os", types.SimpleNamespace(name="nt")
