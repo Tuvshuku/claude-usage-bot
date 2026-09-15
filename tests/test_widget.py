@@ -12,6 +12,56 @@ from launcher_config import render_wsl_launcher
 
 @unittest.skipUnless(os.name == "nt", "requires Windows PowerShell")
 class WidgetLogicTests(unittest.TestCase):
+    def test_dashboard_footer_handles_new_and_older_snapshots(self):
+        result = self.powershell(self.widget_functions(
+            "Update-Widget", "Get-SnapshotStaleAfter", "Format-Tokens"
+        ) + """
+Add-Type -AssemblyName PresentationFramework
+[System.Threading.Thread]::CurrentThread.CurrentCulture = 'en-US'
+function Read-Snapshot { $script:InputSnapshot }
+function Get-Level { param($pct) [pscustomobject]@{A='';B='';Mood='happy'} }
+function New-Gradient { param($a,$b) $null }
+function ConvertTo-Brush { param($value) $null }
+function Set-Mood { param($mood,$color) }
+function Set-Gauge { param($i,$g,$accent,$elapsed) }
+$ui = @{}
+foreach ($name in @('Card','StatusDot','StatusText','Subtitle','UsageDetail')) {
+    $ui[$name] = [pscustomobject]@{Background=$null;Fill=$null;Text=''}
+}
+$ui.FooterLeft = New-Object System.Windows.Controls.TextBlock
+$ui.FooterRight = New-Object System.Windows.Controls.TextBlock
+$script:Open=$true; $script:Tick=1; $script:WakeUntil=0; $script:SparkBars=@()
+$script:InputSnapshot = [pscustomobject]@{
+    generated_at=[DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+    status='active';metric='total';gauges=@();models=@();sparkline=@()
+    burn=[pscustomobject]@{tokens_per_min=0}; pricing_as_of='2026-09-15'
+    today=[pscustomobject]@{
+        tokens=123456;tokens_label='123.5k';sessions=1;cost_usd=1.25;cost_exact=$true
+        token_breakdown=[pscustomobject]@{
+            input_tokens=10;output_tokens=100;cache_write_5m_tokens=200
+            cache_write_1h_tokens=300;cache_read_tokens=122846
+        }
+    }
+}
+Update-Widget
+$newText=$ui.FooterLeft.ToolTip
+$newCost=$ui.FooterRight.Text
+$script:InputSnapshot.today = [pscustomobject]@{
+    tokens=10;tokens_label='10';sessions=0;cost_usd=0;cost_exact=$false
+}
+$script:InputSnapshot.PSObject.Properties.Remove('pricing_as_of')
+Update-Widget
+@{newText=$newText;newCost=$newCost;oldText=$ui.FooterLeft.ToolTip;
+  oldCost=$ui.FooterRight.ToolTip} | ConvertTo-Json -Compress
+""")
+        values = json.loads(result)
+        self.assertIn("123,456 tokens", values["newText"])
+        self.assertIn("122,846", values["newText"])
+        self.assertEqual(values["newCost"], "~$1.25 api-equiv")
+        self.assertEqual(values["oldText"], "10 tokens counted today (total)")
+        self.assertIn("unavailable", values["oldCost"])
+        self.assertNotIn("2026-09-15", values["oldCost"])
+
     def widget_functions(self, *names):
         path = str(Path(__file__).resolve().parents[1] / "widget.ps1").replace("'", "''")
         wanted = ",".join(f"'{name}'" for name in names)

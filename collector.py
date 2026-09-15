@@ -70,14 +70,17 @@ PROJECTS_DIR = Path.home() / ".claude" / "projects"
 HOUR = 3600
 DAY = 86400
 WEEK = 7 * DAY
-STATE_VERSION = 5
+STATE_VERSION = 7
 
 # --------------------------------------------------------------------------
 # Pricing, USD per 1M tokens (base input, output).
-# Source: bundled claude-api skill model table, cached 2026-06-24.
-# Cache multipliers on base input: 5m write 1.25x, 1h write 2.0x, read 0.1x.
+# Source: https://platform.claude.com/docs/en/about-claude/pricing
+# Verified 2026-09-15. These are current API-equivalent rates, not an invoice.
+# Cache multipliers: 5m write 1.25x, 1h write 2x; reads vary by model.
 # --------------------------------------------------------------------------
 PRICING = {
+    "claude-fable-5-1": (10.0, 50.0),
+    "claude-mythos-5-1": (10.0, 50.0),
     "claude-fable-5": (10.0, 50.0),
     "claude-mythos-5": (10.0, 50.0),
     "claude-mythos-preview": (10.0, 50.0),
@@ -86,17 +89,21 @@ PRICING = {
     "claude-opus-4-7": (5.0, 25.0),
     "claude-opus-4-6": (5.0, 25.0),
     "claude-opus-4-5": (5.0, 25.0),
-    "claude-sonnet-5": (3.0, 15.0),          # intro pricing applied below
+    "claude-opus-4-1": (15.0, 75.0),
+    "claude-opus-4": (15.0, 75.0),
+    "claude-sonnet-5": (2.0, 10.0),
     "claude-sonnet-4-6": (3.0, 15.0),
     "claude-sonnet-4-5": (3.0, 15.0),
+    "claude-sonnet-4": (3.0, 15.0),
     "claude-haiku-4-5": (1.0, 5.0),
+    "claude-3-5-haiku": (0.8, 4.0),
 }
 FAST_PRICING = {
     "claude-opus-5": (10.0, 50.0),
     "claude-opus-4-8": (10.0, 50.0),
 }
-SONNET5_INTRO = (2.0, 10.0)
-SONNET5_INTRO_UNTIL = datetime(2026, 9, 1, tzinfo=timezone.utc).timestamp()
+CACHE_READ_MULTIPLIERS = {"claude-fable-5-1": 0.025, "claude-mythos-5-1": 0.025}
+PRICING_AS_OF = "2026-09-15"
 FALLBACK_PRICE = (5.0, 25.0)  # assumed Opus-tier when the model is unknown
 
 DATE_SUFFIX = re.compile(r"-\d{8}$")
@@ -372,7 +379,7 @@ def new_state() -> dict:
         "files": {},         # path -> [size, mtime, offset]
         "hours": {},         # "<epoch_hour>" -> {"<model>|<speed>": [6 ints]}
         "recent": [],        # [ts, key, in, out, cw5, cw1h, cr]
-        "requests": {},      # requestId -> [ts, model key, in, out, cw5, cw1h, cr, sessionId]
+        "requests": {},      # message ID -> [ts, key, in, out, cw5, cw1h, cr, session, accounting]
         "days": {},          # "YYYY-MM-DD" -> [sessionId, ...]
         "limit_events": [],  # timestamps of observed 429s
         # Claude Code's session window: 5 hours from the first message, then a
@@ -491,10 +498,42 @@ def normalize_model(raw: str) -> str:
 
 
 def _token_count(value) -> int:
+    if isinstance(value, bool):
+        return 0
     try:
         return max(int(value or 0), 0)
     except (TypeError, ValueError, OverflowError):
         return 0
+
+
+def usage_counts(usage: dict) -> list[int]:
+    """Read disjoint token categories; thinking is already part of output."""
+    creation = usage.get("cache_creation") or {}
+    if not isinstance(creation, dict):
+        creation = {}
+    cw5 = _token_count(creation.get("ephemeral_5m_input_tokens"))
+    cw1h = _token_count(creation.get("ephemeral_1h_input_tokens"))
+    # Preserve an aggregate's unclassified remainder when only one tier exists.
+    aggregate = _token_count(usage.get("cache_creation_input_tokens"))
+    cw5 += max(aggregate - cw5 - cw1h, 0)
+    return [
+        _token_count(usage.get("input_tokens")),
+        _token_count(usage.get("output_tokens")), cw5, cw1h,
+        _token_count(usage.get("cache_read_input_tokens")),
+    ]
+
+
+def usage_parts(usage: dict, model: str) -> list[tuple[str, dict]]:
+    """Iterations replace the top-level totals, which omit compaction usage."""
+    iterations = usage.get("iterations")
+    if (isinstance(iterations, list) and iterations
+            and all(isinstance(item, dict)
+                    and all(isinstance(item.get(key), int)
+                            and not isinstance(item[key], bool) and item[key] >= 0
+                            for key in ("input_tokens", "output_tokens"))
+                    for item in iterations)):
+        return [(normalize_model(item.get("model") or model), item) for item in iterations]
+    return [(model, usage)]
 
 
 def extract_usage(record: dict):
@@ -510,7 +549,8 @@ def extract_usage(record: dict):
     if not isinstance(usage, dict):
         return None
 
-    request_id = record.get("requestId") or message.get("id")
+    # A message ID survives transcript copies that omit the HTTP request ID.
+    request_id = message.get("id") or record.get("requestId")
     if not isinstance(request_id, (str, int)) or isinstance(request_id, bool):
         return None
     request_id = str(request_id)
@@ -525,26 +565,112 @@ def extract_usage(record: dict):
 
     speed = str(usage.get("speed") or "standard")
 
-    creation = usage.get("cache_creation") or {}
-    if not isinstance(creation, dict):
-        creation = {}
-    cw5 = _token_count(creation.get("ephemeral_5m_input_tokens"))
-    cw1h = _token_count(creation.get("ephemeral_1h_input_tokens"))
-    if cw5 == 0 and cw1h == 0:
-        # Older transcripts only carry the aggregate; assume the 5m tier.
-        cw5 = _token_count(usage.get("cache_creation_input_tokens"))
-
-    counts = [
-        _token_count(usage.get("input_tokens")),
-        _token_count(usage.get("output_tokens")),
-        cw5,
-        cw1h,
-        _token_count(usage.get("cache_read_input_tokens")),
-    ]
+    counts = [0] * 5
+    for _, part in usage_parts(usage, model):
+        counts = [a + b for a, b in zip(counts, usage_counts(part))]
     session_id = record.get("sessionId")
     if not isinstance(session_id, (str, int)) or isinstance(session_id, bool):
         session_id = None
     return request_id, ts, f"{model}|{speed}", counts, session_id
+
+
+def usage_accounting(record: dict, model_key: str) -> dict:
+    """Keep the model and billing metadata that token-only rollups lose."""
+    usage = record["message"]["usage"]
+    model, _, speed = model_key.partition("|")
+    parts = usage_parts(usage, model)
+    models = {}
+    detailed = {}
+    for part_model, part in parts:
+        key = f"{part_model}|{speed}"
+        counts = usage_counts(part)
+        add_into(models, key, counts + [0])
+        creation = part.get("cache_creation")
+        classified = (sum(_token_count(creation.get(k)) for k in (
+            "ephemeral_5m_input_tokens", "ephemeral_1h_input_tokens"
+        )) if isinstance(creation, dict) else 0)
+        detailed[key] = detailed.get(key, True) and classified == sum(counts[2:4])
+    server_tools = usage.get("server_tool_use")
+    if not isinstance(server_tools, dict):
+        server_tools = {}
+    timestamp = parse_timestamp(record.get("timestamp"))
+    explicit_speed = usage.get("speed")
+    if explicit_speed not in ("standard", "fast"):
+        explicit_speed = None
+    geo = usage.get("inference_geo")
+    if geo not in ("us", "global"):
+        geo = None
+    return {
+        "models": models,
+        "detailed": detailed,
+        "iterations": parts[0][1] is not usage,
+        "speed": explicit_speed,
+        "speed_at": timestamp if explicit_speed else None,
+        "geo": geo,
+        "geo_at": timestamp if geo else None,
+        "searches": _token_count(server_tools.get("web_search_requests")),
+        "other_tools": any(_token_count(value) for key, value in server_tools.items()
+                           if key not in {"web_search_requests", "web_fetch_requests"}),
+        "at": timestamp,
+    }
+
+
+def merge_accounting(previous: dict, current: dict) -> dict:
+    merged = dict(current)
+    # Metadata can arrive on a different chunk than the final token counts.
+    # Track each field's own timestamp so omissions and older replays cannot
+    # undo an explicit setting, regardless of file discovery order.
+    for field in ("speed", "geo"):
+        timestamp_key = field + "_at"
+        candidates = [item for item in (previous, current) if item.get(field) is not None]
+        selected = max(candidates, key=lambda item: (item[timestamp_key], item[field])) if candidates else current
+        merged[field] = selected[field]
+        merged[timestamp_key] = selected[timestamp_key]
+    merged["searches"] = max(previous["searches"], current["searches"])
+    merged["other_tools"] = previous["other_tools"] or current["other_tools"]
+    merged["at"] = max(previous["at"], current["at"])
+    speed = merged["speed"] or "standard"
+    previous, current = dict(previous), dict(current)
+    for item in (previous, current):
+        for field in ("models", "detailed"):
+            item[field] = {f"{key.partition('|')[0]}|{speed}": value
+                           for key, value in item[field].items()}
+    # Iteration-level data can assign tokens to a different model (advisor) and
+    # includes compaction. Never combine it with a previous top-level summary.
+    if previous["iterations"] != current["iterations"]:
+        selected = current if current["iterations"] else previous
+        for field in ("models", "detailed", "iterations"):
+            merged[field] = selected[field]
+        return merged
+    merged["models"] = {key: list(value) for key, value in previous["models"].items()}
+    merged["detailed"] = dict(previous["detailed"])
+    for key, new in current["models"].items():
+        old = merged["models"].get(key)
+        if old is None:
+            merged["models"][key] = list(new)
+            merged["detailed"][key] = current["detailed"][key]
+            continue
+        counts = [max(a, b) for a, b in zip(old, new)]
+        # An aggregate-only cache count can later be classified as 1h. Taking
+        # the maximum of each tier would count those same tokens twice.
+        total_write = max(sum(old[2:4]), sum(new[2:4]))
+        old_detailed = previous["detailed"].get(key, False)
+        new_detailed = current["detailed"].get(key, False)
+        chosen = max(((old_detailed, sum(old[2:4]), previous["at"], old),
+                      (new_detailed, sum(new[2:4]), current["at"], new)))
+        # Even an incomplete breakdown supplies a lower bound for known 1h
+        # writes. Keep the best such bound until a complete split is available.
+        counts[3] = chosen[3][3] if chosen[0] else max(old[3], new[3])
+        counts[2] = total_write - counts[3]
+        merged["models"][key] = counts
+        merged["detailed"][key] = chosen[0] and chosen[1] == total_write
+    return merged
+
+
+def entry_models(entry: list) -> dict:
+    if len(entry) > 8:
+        return {key: counts[:5] + [1] for key, counts in entry[8]["models"].items()}
+    return {entry[1]: entry[2:7] + [1]}
 
 
 def is_limit_event(raw: bytes, record: dict) -> bool:
@@ -633,16 +759,18 @@ def scan(state: dict, cfg: dict, now: float) -> int:
             if ts < retention_cutoff:
                 continue
             previous = requests.get(request_id)
+            accounting = usage_accounting(record, model_key)
             if previous is not None:
                 # Streaming records are cumulative. Replayed partial records
                 # must not undo a final count, and updates must not add a request.
-                counts = [max(old, new) for old, new in zip(previous[2:7], counts)]
+                accounting = merge_accounting(previous[8], accounting)
                 ts = min(ts, previous[0])
                 if state.get("session_start") == previous[0]:
                     state["session_start"] = ts
-                model_key = previous[1]
+                model_key = f"{previous[1].partition('|')[0]}|{accounting['speed'] or 'standard'}"
                 session_id = previous[7] or session_id
-            entry = [ts, model_key, *counts, session_id]
+            counts = totals_of(accounting["models"])[:5]
+            entry = [ts, model_key, *counts, session_id, accounting]
             if entry != previous:
                 requests[request_id] = entry
                 changed.add(request_id)
@@ -666,7 +794,9 @@ def rebuild_aggregates(state: dict, cfg: dict, now: float) -> None:
         ts, model_key = entry[:2]
         counts, session_id = entry[2:7], entry[7]
         bucket = state["hours"].setdefault(str(int(ts // HOUR) * HOUR), {})
-        add_into(bucket, model_key, counts + [1])
+        per_model = entry_models(entry)
+        for key, agg in per_model.items():
+            add_into(bucket, key, agg)
         if ts >= now - 8 * HOUR:
             state["recent"].append([ts, model_key, *counts])
 
@@ -674,7 +804,8 @@ def rebuild_aggregates(state: dict, cfg: dict, now: float) -> None:
             if anchor is None or ts >= anchor + block_seconds:
                 anchor = ts
                 state["session_models"] = {}
-            add_into(state["session_models"], model_key, counts + [1])
+            for key, agg in per_model.items():
+                add_into(state["session_models"], key, agg)
 
         if session_id:
             day = datetime.fromtimestamp(ts, timezone.utc).astimezone().strftime("%Y-%m-%d")
@@ -980,8 +1111,6 @@ def price_for(model_key: str, now: float) -> tuple[tuple[float, float], bool]:
     model, _, speed = model_key.partition("|")
     if speed == "fast" and model in FAST_PRICING:
         return FAST_PRICING[model], True
-    if model == "claude-sonnet-5" and now < SONNET5_INTRO_UNTIL:
-        return SONNET5_INTRO, True
     if model in PRICING:
         return PRICING[model], True
     return FALLBACK_PRICE, False
@@ -994,11 +1123,44 @@ def cost_of(per_model: dict[str, list[int]], now: float) -> tuple[float, bool]:
         (pin, pout), known = price_for(model_key, now)
         exact = exact and known
         inp, out, cw5, cw1h, cr = agg[0], agg[1], agg[2], agg[3], agg[4]
+        read_multiplier = CACHE_READ_MULTIPLIERS.get(model_key.partition("|")[0], 0.1)
         total += (
             inp * pin + out * pout
-            + cw5 * pin * 1.25 + cw1h * pin * 2.0 + cr * pin * 0.1
+            + cw5 * pin * 1.25 + cw1h * pin * 2.0 + cr * pin * read_multiplier
         ) / 1_000_000
     return total, exact
+
+
+def window_cost(state: dict, start: float | None, end: float | None,
+                cfg: dict, now: float, fable_only: bool = False) -> tuple[float, bool]:
+    total, exact = 0.0, True
+    if start is None or end is None:
+        return total, exact
+    for entry in state["requests"].values():
+        if not start <= entry[0] < end:
+            continue
+        models = {key: counts for key, counts in entry_models(entry).items()
+                  if not fable_only or is_fable(key, cfg)}
+        if not models:
+            continue
+        cost, known = cost_of(models, now)
+        if len(entry) > 8:
+            meta = entry[8]
+            if meta.get("geo") == "us":
+                cost *= 1.1
+            known = known and all(meta["detailed"].get(key, False) for key in models)
+            known = known and not meta["other_tools"]
+            # Search charges belong to the request's primary model.
+            if not fable_only or is_fable(entry[1], cfg):
+                cost += meta["searches"] * 0.01
+        total += cost
+        exact = exact and known
+    return total, exact
+
+
+def token_breakdown(agg: list[int]) -> dict:
+    return dict(zip(("input_tokens", "output_tokens", "cache_write_5m_tokens",
+                     "cache_write_1h_tokens", "cache_read_tokens"), agg[:5]))
 
 
 def metric_of(agg: list[int], metric: str) -> int:
@@ -1035,8 +1197,9 @@ def window_totals(hours: dict, start: float, end: float, cfg: dict,
             ts, key = entry[:2]
             hour_start = int(ts // HOUR) * HOUR
             if start <= ts < end and (hour_start < start or hour_start + HOUR > end):
-                if not fable_only or is_fable(key, cfg):
-                    add_into(out, key, entry[2:7] + [1])
+                for key, agg in entry_models(entry).items():
+                    if not fable_only or is_fable(key, cfg):
+                        add_into(out, key, agg)
     return out
 
 
@@ -1225,7 +1388,9 @@ def build_snapshot(state: dict, cfg: dict, now: float) -> dict:
         totals = totals_of(window["models"])
         used = metric_of(totals, metric)
         limit, source = resolve_limit(cfg, state, name, auto_value)
-        cost, cost_exact = cost_of(window["models"], now)
+        cost, cost_exact = window_cost(
+            state, window["start"], window["end"], cfg, now, fable_only=name == "fable"
+        )
         pct = (used / limit) if limit else 0.0
         resets_in = window["resets_in"]
         detail = "calibrated" if source == "configured" else "your busiest so far"
@@ -1266,6 +1431,7 @@ def build_snapshot(state: dict, cfg: dict, now: float) -> dict:
             "age_seconds": served.get("age_seconds") if served_from_cache else None,
             "cost_usd": round(cost, 4),
             "cost_exact": cost_exact,
+            "token_breakdown": token_breakdown(totals),
             "used_label": humanize(used),
             "limit_label": humanize(limit),
         })
@@ -1291,7 +1457,7 @@ def build_snapshot(state: dict, cfg: dict, now: float) -> dict:
         hours, today_start, today_end, cfg, requests=state["requests"]
     )
     today_totals = totals_of(today_models)
-    today_cost, today_cost_exact = cost_of(today_models, now)
+    today_cost, today_cost_exact = window_cost(state, today_start, today_end, cfg, now)
     today_key = datetime.fromtimestamp(now, timezone.utc).astimezone().strftime("%Y-%m-%d")
 
     # ---- sparkline: last 24 hourly values --------------------------------
@@ -1335,6 +1501,7 @@ def build_snapshot(state: dict, cfg: dict, now: float) -> dict:
         "generated_at": now,
         "refresh_interval_seconds": cfg["interval_seconds"],
         "metric": metric,
+        "pricing_as_of": PRICING_AS_OF,
         "status": status,
         "idle_seconds": round(idle_seconds) if idle_seconds is not None else None,
         "gauges": gauges,
@@ -1346,6 +1513,7 @@ def build_snapshot(state: dict, cfg: dict, now: float) -> dict:
         "today": {
             "tokens": metric_of(today_totals, metric),
             "tokens_label": humanize(metric_of(today_totals, metric)),
+            "token_breakdown": token_breakdown(today_totals),
             "cost_usd": round(today_cost, 4),
             "cost_exact": today_cost_exact,
             "sessions": len(state["days"].get(today_key, [])),

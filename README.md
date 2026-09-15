@@ -317,11 +317,21 @@ rounding bug on our side.
 
 ### The cost figure is API-equivalent, not your bill
 
-It prices your token counts at published API rates (including cache read/write
-multipliers, fast-mode pricing, and Sonnet 5's introductory rate). On a Pro or
-Max subscription you are not billed this — it is a measure of how much work you
-pushed through. Unknown models fall back to Opus-tier rates and set
-`cost_exact: false` in the JSON.
+It prices your local token counts at [published API rates](https://platform.claude.com/docs/en/about-claude/pricing),
+checked September 15, 2026. This includes Fable/Mythos 5.1's discounted cache
+reads, Sonnet 5's permanent $2/$10 rate per million input/output tokens, both
+cache-write durations, fast mode, recorded US inference, and recorded web searches.
+On a Pro or Max subscription this is an API-equivalent estimate, not your bill.
+It uses the checked rate table for all retained usage, not historical invoice rates.
+Unknown models use an Opus-tier fallback. Missing cache durations and unpriced
+server tools also set `cost_exact: false`; that flag describes pricing coverage,
+not a guarantee that every billed request appears in the local transcripts.
+
+Hover over today's token total to see exact counts for input, output, cache
+writes, and cache reads. The default total includes each cache read because it
+is usage on another request. Thinking tokens are already included in output.
+Recorded compaction iterations are included, and iterations that name a
+different model use that model's rate. Hover over the cost for pricing coverage.
 
 ## Configuration — `config.json`
 

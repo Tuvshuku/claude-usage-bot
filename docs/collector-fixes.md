@@ -2,6 +2,23 @@
 
 ## Unreleased reliability fixes
 
+- Token and cost accounting now recognizes Fable/Mythos 5.1 and their 0.025x
+  cache-read rate. Sonnet 5 remains $2/$10 per million input/output tokens.
+  Rates were checked against the [Anthropic pricing table](https://platform.claude.com/docs/en/about-claude/pricing)
+  on September 15, 2026 and describe current API-equivalent usage, not invoices.
+- Message IDs deduplicate transcript copies even when the HTTP request ID is
+  missing. Cache-duration refinements cannot count the same write twice.
+  [Usage iterations](https://platform.claude.com/docs/en/build-with-claude/compaction#understanding-usage)
+  replace top-level totals so compaction is included and mixed-model iterations
+  receive their own token totals and prices. Thinking subtotals are not added
+  again. Recorded speed, US inference, and web search charges affect costs.
+- Today's token tooltip shows exact input, output, and cache counts. The cost
+  tooltip reports missing pricing coverage; unclassified cache writes and
+  unpriced server tools no longer claim complete pricing coverage.
+- Billing metadata survives compaction updates and out-of-order transcript
+  copies. Speed and inference geography keep their own observation timestamps.
+  Partial cache splits retain known one-hour writes; malformed iteration counts
+  fall back to valid top-level usage.
 - Walking and jumping advance with elapsed time rather than callback counts,
   with an 8 ms timer request (to avoid a coarse 16 ms request being rounded to
   roughly 31 ms on Windows) and capped catch-up after a delayed frame.
@@ -27,10 +44,10 @@
 
 ## Updating an existing installation
 
-Restart the collector after updating the source. State schema 5 rebuilds local
+Restart the collector after updating the source. State schema 7 rebuilds local
 totals from transcripts on its first run, preserving the saved account readings.
 The request ledger retains timestamps and token counts for `retention_days`, so
-the state file is larger than schema 4. It contains no transcript message text
+the state file also retains per-model accounting metadata. It contains no transcript message text
 or OAuth credentials.
 
 For WSL installations, stop the old collector before restarting it: the older

@@ -593,6 +593,21 @@ function Update-Widget {
     $plural = 's'; if ($n -eq 1) { $plural = '' }
     $ui.FooterLeft.Text  = ('today {0} - {1} session{2}' -f $snap.today.tokens_label, $n, $plural)
     $ui.FooterRight.Text = ('~${0:N2} api-equiv' -f [double]$snap.today.cost_usd)
+    $ui.FooterLeft.ToolTip = ('{0:N0} tokens counted today ({1})' -f [double]$snap.today.tokens, $snap.metric)
+    $breakdown = $snap.today.token_breakdown
+    if ($null -ne $breakdown) {
+        $ui.FooterLeft.ToolTip += ("`nInput: {0:N0}  Output: {1:N0}`nCache writes: {2:N0} (5m), {3:N0} (1h)`nCache reads: {4:N0}" -f
+            [double]$breakdown.input_tokens, [double]$breakdown.output_tokens,
+            [double]$breakdown.cache_write_5m_tokens, [double]$breakdown.cache_write_1h_tokens,
+            [double]$breakdown.cache_read_tokens)
+    }
+    $ui.FooterRight.ToolTip = 'API-equivalent estimate for local transcript usage, not your subscription bill.'
+    if ($snap.today.cost_exact -eq $false) {
+        $ui.FooterRight.ToolTip += "`nSome model rates, cache durations, or tool charges are unavailable."
+    }
+    if ($snap.pricing_as_of) {
+        $ui.FooterRight.ToolTip += ("`nPublished rates checked {0}." -f $snap.pricing_as_of)
+    }
 }
 
 # ---------------------------------------------------------------------------
