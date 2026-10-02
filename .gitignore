@@ -2,6 +2,8 @@
 state.json
 config.json
 .collector.lock
+startup.log
+widget.log
 
 # Python caches and test artifacts
 __pycache__/

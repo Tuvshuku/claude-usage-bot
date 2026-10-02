@@ -86,18 +86,40 @@ must be installed and logged in directly on Windows. Mutable state and the
 example configuration live in `%LOCALAPPDATA%\ClaudeUsageBot`; the widget
 snapshot lives in `%USERPROFILE%\.claude-widget`.
 
+If you use `CLAUDE_CONFIG_DIR`, launch the bot with that same environment
+variable; both transcripts and credentials are read from that directory.
+If you run Claude Code inside WSL, use the [WSL setup](#wsl) below.
+
 Upgrades from the former Cute Claude Monitor name continue using its existing
 AppData folder automatically, so saved state and configuration are not lost.
 
 The executable is currently unsigned, so Windows SmartScreen may show an
 unrecognized-app warning on the first launch.
 
+#### If the download or first launch fails
+
+- Download **ClaudeUsageBot.exe** from the release's **Assets** list. GitHub's
+  automatic **Source code (zip)** download is for developers and requires Python.
+- If the direct download does not start, open the
+  [latest release page](https://github.com/Tuvshuku/claude-usage-bot/releases/latest)
+  and select the executable there. The desktop app requires 64-bit Windows 10/11.
+- The pet appears while the initial history scan runs. Open its dashboard to
+  see loading status; large histories can take longer on the first launch.
+- If Windows blocks the unsigned download, review the publisher warning and
+  your organization's policy. Managed computers may require your administrator
+  to approve the app.
+- If the app closes or shows a startup error, check `startup.log` and `widget.log`
+  in `%LOCALAPPDATA%\ClaudeUsageBot` (or the existing `CuteClaudeMonitor` folder
+  after an upgrade). Share the error and these logs when reporting a problem;
+  do not share your Claude credentials or transcript files.
+  Source-mode logs are written beside `native_app.py`.
+
 To switch from an existing WSL installation, first run
 `systemctl --user disable --now claude-usage-collector` inside WSL.
 
 #### Run from source in Windows Terminal
 
-With Python 3 installed:
+With Python 3.10 or newer installed:
 
 ```powershell
 git clone https://github.com/Tuvshuku/claude-usage-bot.git
@@ -465,6 +487,21 @@ drafts, and a first-user checklist. Preview the interactive landing page locally
 with `python3 -m http.server 8765 --directory docs`, then visit
 `http://localhost:8765`. The browser demo uses example data and does not connect
 to an account.
+
+## Building and publishing downloads
+
+Run `powershell -ExecutionPolicy Bypass -File scripts/build-windows.ps1` on
+Windows to build into `dist`. The build runs unit tests, checks bundled assets,
+and launches the executable using an isolated profile with sample usage. This
+checks the actual WPF dashboard, paths with spaces and Korean characters, and
+startup without Python or WSL on `PATH`.
+
+Every push to `main` and pull request also builds and tests the executable in
+GitHub Actions. To publish a download, run the **Windows executable** workflow
+with a new `release_tag`, such as `v0.5.1`, or push that version tag. A blank
+manual tag produces an Actions artifact only. A release is published only after
+the executable passes its startup check; existing releases are not overwritten.
+The website's download button always points to the latest published release.
 
 ## License
 

@@ -3,13 +3,16 @@
 
 from __future__ import annotations
 
+import argparse
 import ctypes
 import os
 import shutil
+from contextlib import redirect_stderr, redirect_stdout
 # The child is a fixed system PowerShell path and shell mode is never used.
 import subprocess  # nosec B404
 import sys
 import time
+import traceback
 from pathlib import Path
 
 import collector
@@ -24,6 +27,9 @@ def bundled_asset(name: str) -> Path:
 
 
 def show_error(message: str) -> None:
+    if "--smoke-test" in sys.argv:
+        collector.log(message)
+        return
     if os.name == "nt":
         ctypes.windll.user32.MessageBoxW(None, message, APP_TITLE, 0x10)
     elif sys.stderr is not None:
@@ -39,7 +45,7 @@ def install_example_config() -> None:
         shutil.copyfile(source, destination)
 
 
-def launch_widget(data_path: Path) -> subprocess.Popen:
+def launch_widget(data_path: Path, smoke_result: Path | None = None) -> subprocess.Popen:
     widget = bundled_asset("widget.ps1")
     if not widget.is_file():
         raise FileNotFoundError(f"Widget asset not found: {widget}")
@@ -54,6 +60,7 @@ def launch_widget(data_path: Path) -> subprocess.Popen:
     command = [
         str(powershell),
         "-NoProfile",
+        "-STA",
         "-ExecutionPolicy", "Bypass",
         "-WindowStyle", "Hidden",
         "-File", str(widget),
@@ -61,11 +68,26 @@ def launch_widget(data_path: Path) -> subprocess.Popen:
         "-NativeMode",
         "-CollectorDataDir", str(collector.APP_DIR),
     ]
+    if smoke_result is not None:
+        command.extend(["-SmokeTestResult", str(smoke_result)])
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-    return subprocess.Popen(command, creationflags=flags)  # nosec B603
+    # PyInstaller changes the DLL search path. System PowerShell must use its
+    # own libraries, not the copies extracted by the Python bootloader.
+    frozen_windows = os.name == "nt" and getattr(sys, "frozen", False)
+    if frozen_windows:
+        ctypes.windll.kernel32.SetDllDirectoryW(None)
+    try:
+        with (collector.APP_DIR / "widget.log").open("wb") as log:
+            return subprocess.Popen(  # nosec B603
+                command, creationflags=flags, stdin=subprocess.DEVNULL,
+                stdout=log, stderr=subprocess.STDOUT,
+            )
+    finally:
+        if frozen_windows:
+            ctypes.windll.kernel32.SetDllDirectoryW(str(sys._MEIPASS))
 
 
-def main() -> int:
+def main(smoke_result: Path | None = None) -> int:
     if os.name != "nt":
         show_error("The desktop executable currently supports Windows 10 and 11.")
         return 2
@@ -77,19 +99,28 @@ def main() -> int:
                 "is not writable."
             )
             return 1
-        install_example_config()
-        cfg = collector.load_config()
-        output_path = collector.resolve_output_path(cfg)
-        state = collector.load_state()
-        collector.run_once(state, cfg, output_path)
-        widget_process = launch_widget(output_path)
-        interval = max(float(cfg["interval_seconds"]), 1.0)
+        with (collector.APP_DIR / "startup.log").open(
+            "w", encoding="utf-8", errors="backslashreplace", buffering=1,
+        ) as log, redirect_stderr(log), redirect_stdout(log):
+            return run_app(smoke_result)
     except Exception as exc:
         show_error(f"Claude Usage Bot could not start.\n\n{exc}")
         return 1
 
-    next_pass = time.monotonic() + interval
+
+def run_app(smoke_result: Path | None = None) -> int:
+    widget_process = None
     try:
+        install_example_config()
+        cfg = collector.load_config()
+        output_path = collector.resolve_output_path(cfg)
+        # Show the pet before a potentially slow history rebuild or network
+        # request, so first launch does not appear to do nothing.
+        widget_process = (launch_widget(output_path, smoke_result) if smoke_result
+                          else launch_widget(output_path))
+        state = collector.load_state()
+        interval = max(float(cfg["interval_seconds"]), 1.0)
+        next_pass = time.monotonic()
         while (exit_code := widget_process.poll()) is None:
             remaining = next_pass - time.monotonic()
             if remaining > 0:
@@ -101,17 +132,29 @@ def main() -> int:
                 collector.log(f"pass failed: {exc!r}")
             next_pass = time.monotonic() + interval
     except KeyboardInterrupt:
-        widget_process.terminate()
         return 0
+    except Exception as exc:
+        traceback.print_exc()
+        show_error(
+            f"Claude Usage Bot could not start.\n\n{exc}\n\n"
+            f"Details: {collector.APP_DIR / 'startup.log'}"
+        )
+        return 1
+    finally:
+        if widget_process is not None and widget_process.poll() is None:
+            widget_process.terminate()
+            widget_process.wait(timeout=10)
     if exit_code != 0:
         show_error(
             f"The desktop widget stopped unexpectedly (exit code {exit_code}).\n\n"
-            "Try reopening Claude Usage Bot. If this keeps happening, run "
-            "widget.ps1 in PowerShell to see the underlying error."
+            f"Error details are saved in:\n{collector.APP_DIR / 'widget.log'}\n\n"
+            "Share that log when reporting the problem."
         )
         return 1
     return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    parser = argparse.ArgumentParser(description=APP_TITLE)
+    parser.add_argument("--smoke-test", type=Path, help=argparse.SUPPRESS)
+    raise SystemExit(main(parser.parse_args().smoke_test))

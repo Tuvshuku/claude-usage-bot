@@ -10,9 +10,11 @@ param(
     [string]$DataPath = "$env:USERPROFILE\.claude-widget\usage.json",
     [switch]$NativeMode,
     [string]$CollectorDataDir = '',
-    [string]$WslCalibrationCommand = ''
+    [string]$WslCalibrationCommand = '',
+    [string]$SmokeTestResult = ''
 )
 
+$ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Xaml
 Add-Type -AssemblyName System.Windows.Forms
 
@@ -493,8 +495,13 @@ function Update-Widget {
         $script:Level = $lvl
         $ui.Card.Background = New-Gradient $CARD_A $CARD_B
         Set-Mood 'lost' $lvl.B
-        $ui.Subtitle.Text = 'no data yet - start the collector'
-        $ui.StatusText.Text = 'offline'
+        if ($NativeMode) {
+            $ui.Subtitle.Text = 'loading your Claude Code usage...'
+            $ui.StatusText.Text = 'starting'
+        } else {
+            $ui.Subtitle.Text = 'no data yet - start the collector'
+            $ui.StatusText.Text = 'offline'
+        }
         $ui.StatusDot.Fill = ConvertTo-Brush $lvl.B
         return
     }
@@ -988,4 +995,30 @@ $dataTimer.Add_Tick({
 })
 $dataTimer.Start()
 
+if ($SmokeTestResult) {
+    # The release check exercises a real WPF window and dashboard using only
+    # an isolated fixture. It waits for the collector's first snapshot.
+    $smokeTimer = New-Object System.Windows.Threading.DispatcherTimer
+    $smokeTimer.Interval = [TimeSpan]::FromSeconds(1)
+    $smokeTimer.Add_Tick({
+        try {
+            if (-not (Test-Path -LiteralPath $script:DataPath)) { return }
+            Set-Dashboard $true
+            Update-Widget
+            if (-not $script:Snapshot) { return }
+            if ($script:LastError) { throw $script:LastError }
+            $result = @{
+                tokens = $script:Snapshot.today.tokens
+                footer = $ui.FooterLeft.Text
+                gauges = @($script:Snapshot.gauges).Count
+            } | ConvertTo-Json -Compress
+            [System.IO.File]::WriteAllText($SmokeTestResult, $result)
+        } catch {
+            [Console]::Error.WriteLine($_.ToString())
+        }
+        $smokeTimer.Stop()
+        $window.Close()
+    })
+    $smokeTimer.Start()
+}
 $window.ShowDialog() | Out-Null

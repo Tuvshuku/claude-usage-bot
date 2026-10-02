@@ -2,16 +2,28 @@ name: Windows executable
 
 on:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Publish a new release (for example v0.5.1); leave blank for a test build'
+        required: false
+        type: string
+  pull_request:
+    branches: [main]
   push:
+    branches: [main]
     tags:
       - "v*"
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
     runs-on: windows-latest
+    permissions:
+      contents: write
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag || (startsWith(github.ref, 'refs/tags/') && github.ref_name) || '' }}
 
     steps:
       - name: Check out source
@@ -21,6 +33,15 @@ jobs:
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: "3.13"
+          architecture: x64
+
+      - name: Validate release tag
+        if: env.RELEASE_TAG != ''
+        shell: pwsh
+        run: |
+          if ($env:RELEASE_TAG -notmatch '^v\d+\.\d+\.\d+$') {
+            throw 'Use a release tag such as v0.5.1.'
+          }
 
       - name: Install packager
         run: python -m pip install pyinstaller==6.22.2
@@ -43,6 +64,9 @@ jobs:
           $hash = (Get-FileHash dist/ClaudeUsageBot.exe -Algorithm SHA256).Hash.ToLowerInvariant()
           "$hash  ClaudeUsageBot.exe" | Set-Content dist/SHA256SUMS.txt -Encoding ASCII
 
+      - name: Test executable on a clean profile
+        run: python scripts/smoke-windows.py dist/ClaudeUsageBot.exe
+
       - name: Upload build artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -53,14 +77,15 @@ jobs:
           if-no-files-found: error
 
       - name: Attach executable to GitHub release
-        if: startsWith(github.ref, 'refs/tags/')
+        if: env.RELEASE_TAG != '' && github.event_name != 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view "${{ github.ref_name }}" *> $null
+          gh release view "$env:RELEASE_TAG" *> $null
           if ($LASTEXITCODE -eq 0) {
-            gh release upload "${{ github.ref_name }}" dist/ClaudeUsageBot.exe dist/SHA256SUMS.txt --clobber
+            throw 'This release already exists. Choose a new version to preserve published downloads.'
           } else {
-            gh release create "${{ github.ref_name }}" dist/ClaudeUsageBot.exe dist/SHA256SUMS.txt `
-              --title "Claude Usage Bot ${{ github.ref_name }}" --generate-notes
+            gh release create "$env:RELEASE_TAG" dist/ClaudeUsageBot.exe dist/SHA256SUMS.txt `
+              --target "$env:GITHUB_SHA" --title "Claude Usage Bot $env:RELEASE_TAG" --generate-notes --latest
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }

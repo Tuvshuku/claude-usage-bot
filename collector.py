@@ -65,7 +65,8 @@ def _runtime_data_dir() -> Path:
 APP_DIR = _runtime_data_dir()
 CONFIG_PATH = APP_DIR / "config.json"
 STATE_PATH = APP_DIR / "state.json"
-PROJECTS_DIR = Path.home() / ".claude" / "projects"
+CLAUDE_DIR = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude").expanduser()
+PROJECTS_DIR = CLAUDE_DIR / "projects"
 
 HOUR = 3600
 DAY = 86400
@@ -115,7 +116,7 @@ DATE_SUFFIX = re.compile(r"-\d{8}$")
 # token-weighting guesswork is involved.
 # --------------------------------------------------------------------------
 LIVE_URL = "https://api.anthropic.com/api/oauth/usage"
-CREDENTIALS_PATH = Path.home() / ".claude" / ".credentials.json"
+CREDENTIALS_PATH = CLAUDE_DIR / ".credentials.json"
 OAUTH_BETA = "oauth-2025-04-20"
 # The payload's "limits" array is the authoritative shape -- an entry per bar on
 # the /usage screen, with kind/percent/resets_at and, for the model-scoped one,

@@ -13,12 +13,26 @@ trap {
     exit 1
 }
 
-$python = Get-Command 'pythonw.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
-if (-not $python) {
-    $python = Get-Command 'python.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+$pythonPath = $null
+foreach ($name in @('py.exe', 'python.exe')) {
+    foreach ($candidate in @(Get-Command $name -All -ErrorAction SilentlyContinue)) {
+        # Store aliases can open the Store instead of running Python. The
+        # Python launcher also finds installs that were not added to PATH.
+        if ($candidate.Source -like '*\Microsoft\WindowsApps\*') { continue }
+        $probeArgs = @('-c', 'import sys; print(sys.executable) if sys.version_info >= (3, 10) else sys.exit(1)')
+        if ($name -eq 'py.exe') { $probeArgs = @('-3') + $probeArgs }
+        try {
+            $resolved = & $candidate.Source @probeArgs 2>$null
+            if ($LASTEXITCODE -eq 0 -and $resolved -and (Test-Path -LiteralPath "$resolved")) {
+                $pythonPath = "$resolved"
+                break
+            }
+        } catch { continue }
+    }
+    if ($pythonPath) { break }
 }
-if (-not $python) {
-    throw 'Python 3 was not found. Install it from python.org and enable "Add Python to PATH".'
+if (-not $pythonPath) {
+    throw 'Source mode needs Python 3.10 or newer. Install it from python.org, or download ClaudeUsageBot.exe from https://github.com/Tuvshuku/claude-usage-bot/releases/latest (no Python needed).'
 }
 
 if ($CollectorOnly) {
@@ -31,7 +45,7 @@ if ($CollectorOnly) {
     $arguments = '"{0}"' -f $entryPath
 }
 
-$hostProcess = Start-Process -FilePath $python.Source -ArgumentList $arguments `
+$hostProcess = Start-Process -FilePath $pythonPath -ArgumentList $arguments `
     -WindowStyle Hidden -PassThru
 try {
     $hostProcess.WaitForExit()

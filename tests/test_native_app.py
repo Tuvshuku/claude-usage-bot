@@ -11,7 +11,9 @@ import native_app
 class NativeLauncherTests(unittest.TestCase):
     def test_widget_failure_is_reported_but_normal_exit_is_not(self):
         for child_code in (0, 1, 42):
-            with self.subTest(child_code=child_code), patch.object(
+            with self.subTest(child_code=child_code), tempfile.TemporaryDirectory() as tmp, patch.object(
+                native_app.collector, "APP_DIR", Path(tmp)
+            ), patch.object(
                 native_app, "os", types.SimpleNamespace(name="nt")
             ), patch.object(native_app.collector, "acquire_loop_lock", return_value=True), patch.object(
                 native_app, "install_example_config"
@@ -41,7 +43,7 @@ class NativeLauncherTests(unittest.TestCase):
         ), patch.object(native_app.collector, "load_state", return_value={}), patch.object(
             native_app.collector, "run_once"
         ) as collect, patch.object(native_app, "launch_widget") as launch:
-            launch.return_value.poll.return_value = 0
+            launch.return_value.poll.side_effect = [None, 0, 0]
             self.assertEqual(native_app.main(), 0)
             expected = Path(tmp) / "custom folder" / "snapshot.json"
             self.assertEqual(collect.call_args.args[2], expected)
@@ -61,7 +63,9 @@ class NativeLauncherTests(unittest.TestCase):
 
             with patch.dict(os.environ, {"SystemRoot": str(root)}), patch.object(
                 native_app, "bundled_asset", return_value=widget
-            ), patch.object(native_app.subprocess, "Popen") as popen:
+            ), patch.object(native_app.collector, "APP_DIR", root), patch.object(
+                native_app.subprocess, "Popen"
+            ) as popen:
                 native_app.launch_widget(data_path)
 
             command = popen.call_args.args[0]
@@ -69,6 +73,26 @@ class NativeLauncherTests(unittest.TestCase):
             self.assertEqual(command[command.index("-DataPath") + 1], str(data_path))
             self.assertEqual(command[command.index("-File") + 1], str(widget))
             self.assertIn("-NativeMode", command)
+            self.assertIn("-STA", command)
+            self.assertEqual(popen.call_args.kwargs["stderr"], native_app.subprocess.STDOUT)
+
+    def test_widget_starts_before_history_load_and_collector_failures_are_retried(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.object(
+            native_app, "os", types.SimpleNamespace(name="nt")
+        ), patch.object(native_app.collector, "APP_DIR", Path(tmp)), patch.object(
+            native_app.collector, "acquire_loop_lock", return_value=True
+        ), patch.object(native_app, "install_example_config"), patch.object(
+            native_app.collector, "load_config", return_value={"interval_seconds": 1}
+        ), patch.object(native_app.collector, "resolve_output_path"), patch.object(
+            native_app, "launch_widget"
+        ) as launch, patch.object(native_app.collector, "load_state") as load, patch.object(
+            native_app.collector, "run_once", side_effect=OSError("fixture failure")
+        ) as collect:
+            load.side_effect = lambda: self.assertTrue(launch.called) or {}
+            launch.return_value.poll.side_effect = [None, 0, 0]
+            self.assertEqual(native_app.main(), 0)
+            collect.assert_called_once()
+            self.assertIn("fixture failure", (Path(tmp) / "startup.log").read_text())
 
 
 if __name__ == "__main__":

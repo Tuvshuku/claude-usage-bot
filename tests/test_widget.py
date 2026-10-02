@@ -3,7 +3,10 @@
 import base64
 import json
 import os
+import shutil
 import subprocess
+import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -12,6 +15,26 @@ from launcher_config import render_wsl_launcher
 
 @unittest.skipUnless(os.name == "nt", "requires Windows PowerShell")
 class WidgetLogicTests(unittest.TestCase):
+    def test_source_launcher_runs_python_and_preserves_failure_exit_code(self):
+        with tempfile.TemporaryDirectory(prefix="usage source ") as tmp:
+            root = Path(tmp)
+            shutil.copyfile(Path(__file__).resolve().parents[1] / "run-windows.ps1",
+                            root / "run-windows.ps1")
+            (root / "native_app.py").write_text(
+                "from pathlib import Path\n"
+                "Path(__file__).with_name('started.txt').write_text('started')\n"
+                "raise SystemExit(17)\n", encoding="utf-8",
+            )
+            powershell = Path(os.environ["SystemRoot"]) / "System32/WindowsPowerShell/v1.0/powershell.exe"
+            env = dict(os.environ, PATH=str(Path(sys.executable).parent))
+            result = subprocess.run(
+                [str(powershell), "-NoProfile", "-ExecutionPolicy", "Bypass",
+                 "-File", str(root / "run-windows.ps1")],
+                env=env, capture_output=True, timeout=20,
+            )
+            self.assertEqual(result.returncode, 17, result.stdout + result.stderr)
+            self.assertEqual((root / "started.txt").read_text(), "started")
+
     def test_dashboard_footer_handles_new_and_older_snapshots(self):
         result = self.powershell(self.widget_functions(
             "Update-Widget", "Get-SnapshotStaleAfter", "Format-Tokens"

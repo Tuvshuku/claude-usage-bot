@@ -33,6 +33,8 @@ try {
     $exe = Join-Path $dist 'ClaudeUsageBot.exe'
     & $python (Join-Path $PSScriptRoot 'check-bundle.py') $exe
     if ($LASTEXITCODE -ne 0) { throw 'Bundled asset verification failed.' }
+    & $python (Join-Path $PSScriptRoot 'smoke-windows.py') $exe
+    if ($LASTEXITCODE -ne 0) { throw 'Executable startup verification failed.' }
     $hash = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
     "$hash  ClaudeUsageBot.exe" | Set-Content -LiteralPath (Join-Path $dist 'SHA256SUMS.txt') -Encoding ASCII
     Write-Output "Built: $exe"
