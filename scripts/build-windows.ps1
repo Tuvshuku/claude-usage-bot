@@ -23,21 +23,27 @@ Push-Location $repo
 try {
     & $python -m unittest discover -s tests -v
     if ($LASTEXITCODE -ne 0) { throw 'Tests failed; no executable was built.' }
-    & $python -m PyInstaller --noconfirm --clean --onefile --windowed `
+    & $python -m PyInstaller --noconfirm --clean --onedir --windowed --noupx `
         --name ClaudeUsageBot --distpath $dist `
         --workpath (Join-Path $buildRoot 'work') --specpath $buildRoot `
         --add-data "${repo}\widget.ps1:." `
         --add-data "${repo}\config.example.json:." `
         (Join-Path $repo 'native_app.py')
     if ($LASTEXITCODE -ne 0) { throw 'Executable packaging failed.' }
-    $exe = Join-Path $dist 'ClaudeUsageBot.exe'
+    $app = Join-Path $dist 'ClaudeUsageBot'
+    $exe = Join-Path $app 'ClaudeUsageBot.exe'
     & $python (Join-Path $PSScriptRoot 'check-bundle.py') $exe
     if ($LASTEXITCODE -ne 0) { throw 'Bundled asset verification failed.' }
+    & (Join-Path $PSScriptRoot 'scan-windows.ps1') -Path $app
     & $python (Join-Path $PSScriptRoot 'smoke-windows.py') $exe
     if ($LASTEXITCODE -ne 0) { throw 'Executable startup verification failed.' }
-    $hash = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
-    "$hash  ClaudeUsageBot.exe" | Set-Content -LiteralPath (Join-Path $dist 'SHA256SUMS.txt') -Encoding ASCII
-    Write-Output "Built: $exe"
+    $zip = Join-Path $dist 'ClaudeUsageBot-Windows.zip'
+    Compress-Archive -Path $app -DestinationPath $zip -Force
+    & $python (Join-Path $PSScriptRoot 'smoke-windows.py') $zip
+    if ($LASTEXITCODE -ne 0) { throw 'Downloaded ZIP startup verification failed.' }
+    $hash = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+    "$hash  ClaudeUsageBot-Windows.zip" | Set-Content -LiteralPath (Join-Path $dist 'SHA256SUMS.txt') -Encoding ASCII
+    Write-Output "Built: $zip"
     Write-Output "SHA256: $hash"
     Write-Output "Temporary build environment: $buildRoot"
 } finally {

@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -37,10 +38,19 @@ def main():
         (project / "session.jsonl").write_text(json.dumps(fixture) + "\n", encoding="utf-8")
         result = root / "dashboard.json"
         if len(sys.argv) > 1:
-            # Test the same single file users download, from a different folder.
-            exe = root / "Downloads" / "ClaudeUsageBot.exe"
-            exe.parent.mkdir()
-            shutil.copyfile(Path(sys.argv[1]).resolve(), exe)
+            source = Path(sys.argv[1]).resolve()
+            downloads = root / "Downloads"
+            if source.suffix.lower() == '.zip':
+                with zipfile.ZipFile(source) as bundle:
+                    bundle.extractall(downloads)
+                exe = downloads / "ClaudeUsageBot" / "ClaudeUsageBot.exe"
+            elif (source.parent / '_internal').is_dir():
+                shutil.copytree(source.parent, downloads / 'ClaudeUsageBot')
+                exe = downloads / 'ClaudeUsageBot' / source.name
+            else:
+                downloads.mkdir()
+                exe = downloads / source.name
+                shutil.copyfile(source, exe)
             command = [str(exe)]
         else:
             command = [sys.executable, str(repo / "native_app.py")]

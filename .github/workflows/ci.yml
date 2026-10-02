@@ -52,7 +52,7 @@ jobs:
         shell: powershell
         run: |
           $failed = $false
-          foreach ($path in @('widget.ps1', 'run-windows.ps1', 'scripts/build-windows.ps1')) {
+          foreach ($path in @('widget.ps1', 'run-windows.ps1', 'scripts/build-windows.ps1', 'scripts/scan-windows.ps1')) {
             $tokens = $null
             $errors = $null
             [System.Management.Automation.Language.Parser]::ParseFile(

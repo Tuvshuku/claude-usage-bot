@@ -32,7 +32,7 @@ foreach ($name in @('py.exe', 'python.exe')) {
     if ($pythonPath) { break }
 }
 if (-not $pythonPath) {
-    throw 'Source mode needs Python 3.10 or newer. Install it from python.org, or download ClaudeUsageBot.exe from https://github.com/Tuvshuku/claude-usage-bot/releases/latest (no Python needed).'
+    throw 'Source mode needs Python 3.10 or newer. Install it from python.org, or download and extract ClaudeUsageBot-Windows.zip from https://github.com/Tuvshuku/claude-usage-bot/releases/latest (Python included).'
 }
 
 if ($CollectorOnly) {

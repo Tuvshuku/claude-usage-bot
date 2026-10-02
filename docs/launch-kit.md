@@ -104,7 +104,7 @@ questions. Don't solicit upvotes or mass-post identical messages.
 - Local estimates remain visibly approximate after calibration.
 - A new interactive landing page lets you meet the pet using example data.
 
-Attach `ClaudeUsageBot.exe` and `SHA256SUMS.txt` from `dist/`. Choose the next
+Attach `ClaudeUsageBot-Windows.zip` and `SHA256SUMS.txt` from `dist/`. Choose the next
 version after checking the latest published release; no version is assumed here.
 
 Upgrading: restart the collector. WSL users should stop the old collector and
@@ -151,7 +151,7 @@ ffmpeg -i docs/images/launch-demo.webm -an -c:v libx264 -pix_fmt yuv420p \
 
 On Windows, `powershell -ExecutionPolicy Bypass -File scripts/build-windows.ps1`
 creates an isolated temporary build environment, runs tests, and writes the
-executable and checksum into `dist/`.
+Windows ZIP and checksum into `dist/`, after a Defender scan and startup check.
 
 When ready to publish the website, GitHub Pages can serve the `/docs` directory
 on `main`. The social-image URL assumes

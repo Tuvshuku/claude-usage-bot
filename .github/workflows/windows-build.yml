@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: 'Publish a new release (for example v0.5.1); leave blank for a test build'
+        description: 'Publish an unused vMAJOR.MINOR.PATCH tag; leave blank for a test build'
         required: false
         type: string
   pull_request:
@@ -40,7 +40,7 @@ jobs:
         shell: pwsh
         run: |
           if ($env:RELEASE_TAG -notmatch '^v\d+\.\d+\.\d+$') {
-            throw 'Use a release tag such as v0.5.1.'
+            throw 'Use a numeric release tag in vMAJOR.MINOR.PATCH format.'
           }
 
       - name: Install packager
@@ -51,28 +51,34 @@ jobs:
 
       - name: Build standalone app
         run: >-
-          pyinstaller --noconfirm --clean --onefile --windowed
+          pyinstaller --noconfirm --clean --onedir --windowed --noupx
           --name ClaudeUsageBot
           --add-data "widget.ps1:."
           --add-data "config.example.json:."
           native_app.py
 
-      - name: Verify bundle and write checksum
+      - name: Verify bundle
+        run: python scripts/check-bundle.py dist/ClaudeUsageBot/ClaudeUsageBot.exe
+
+      - name: Scan Windows package
+        shell: powershell
+        run: ./scripts/scan-windows.ps1 -Path dist/ClaudeUsageBot
+
+      - name: Package ZIP and write checksum
         run: |
-          python scripts/check-bundle.py dist/ClaudeUsageBot.exe
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $hash = (Get-FileHash dist/ClaudeUsageBot.exe -Algorithm SHA256).Hash.ToLowerInvariant()
-          "$hash  ClaudeUsageBot.exe" | Set-Content dist/SHA256SUMS.txt -Encoding ASCII
+          Compress-Archive -Path dist/ClaudeUsageBot -DestinationPath dist/ClaudeUsageBot-Windows.zip -Force
+          $hash = (Get-FileHash dist/ClaudeUsageBot-Windows.zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  ClaudeUsageBot-Windows.zip" | Set-Content dist/SHA256SUMS.txt -Encoding ASCII
 
       - name: Test executable on a clean profile
-        run: python scripts/smoke-windows.py dist/ClaudeUsageBot.exe
+        run: python scripts/smoke-windows.py dist/ClaudeUsageBot-Windows.zip
 
       - name: Upload build artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: ClaudeUsageBot-Windows
           path: |
-            dist/ClaudeUsageBot.exe
+            dist/ClaudeUsageBot-Windows.zip
             dist/SHA256SUMS.txt
           if-no-files-found: error
 
@@ -85,7 +91,9 @@ jobs:
           if ($LASTEXITCODE -eq 0) {
             throw 'This release already exists. Choose a new version to preserve published downloads.'
           } else {
-            gh release create "$env:RELEASE_TAG" dist/ClaudeUsageBot.exe dist/SHA256SUMS.txt `
-              --target "$env:GITHUB_SHA" --title "Claude Usage Bot $env:RELEASE_TAG" --generate-notes --latest
+            gh release create "$env:RELEASE_TAG" dist/ClaudeUsageBot-Windows.zip dist/SHA256SUMS.txt `
+              --target "$env:GITHUB_SHA" --title "Claude Usage Bot $env:RELEASE_TAG" `
+              --notes "Download ClaudeUsageBot-Windows.zip, choose Extract All, then open ClaudeUsageBot.exe inside the extracted folder. Keep _internal beside the executable. Python is included. This package passed a Microsoft Defender scan and a Windows dashboard startup test." `
+              --generate-notes --latest
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }

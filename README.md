@@ -11,13 +11,13 @@ A tiny desktop pet that keeps your **Claude Code usage** in view. It wanders,
 it naps, and it opens your dashboard with a click. Warm orange when there's
 room to work; red as your usage climbs.
 
-**[Download for Windows ↓](https://github.com/Tuvshuku/claude-usage-bot/releases/latest/download/ClaudeUsageBot.exe)**
+**[Download for Windows ↓](https://github.com/Tuvshuku/claude-usage-bot/releases/latest/download/ClaudeUsageBot-Windows.zip)**
 &nbsp; · &nbsp; **[Meet the bot ↗](https://tuvshuku.github.io/claude-usage-bot/)**
 &nbsp; · &nbsp; [WSL setup](#wsl)
 &nbsp; · &nbsp; [How it works](#using-it)
 &nbsp; · &nbsp; [What's new](docs/collector-fixes.md)
 
-Free and open source · Windows 10 / 11 · No Python required for the executable
+Free and open source · Windows 10 / 11 · Python included in the Windows package
 
 <p align="center">
   <a href="https://tuvshuku.github.io/claude-usage-bot/"><img src="docs/images/launch-card.png" alt="Claude Usage Bot: Big coding days. Little desktop friend. A preview of the pixel pet and usage dashboard." width="100%"></a>
@@ -78,8 +78,10 @@ widget snapshot.
 
 ### Native Windows — recommended
 
-Download [ClaudeUsageBot.exe from the latest release](https://github.com/Tuvshuku/claude-usage-bot/releases/latest/download/ClaudeUsageBot.exe)
-and double-click it. It is a standalone app: Python and WSL are not required.
+Download [ClaudeUsageBot-Windows.zip from the latest release](https://github.com/Tuvshuku/claude-usage-bot/releases/latest/download/ClaudeUsageBot-Windows.zip).
+Right-click the ZIP, choose **Extract All**, and open `ClaudeUsageBot.exe` inside
+the extracted `ClaudeUsageBot` folder. Keep `_internal` beside the executable.
+Python is included; you do not need to install Python or WSL.
 
 Native mode reads Claude Code data from `%USERPROFILE%\.claude`, so Claude Code
 must be installed and logged in directly on Windows. Mutable state and the
@@ -98,11 +100,17 @@ unrecognized-app warning on the first launch.
 
 #### If the download or first launch fails
 
-- Download **ClaudeUsageBot.exe** from the release's **Assets** list. GitHub's
+- Download **ClaudeUsageBot-Windows.zip** from the release's **Assets** list. GitHub's
   automatic **Source code (zip)** download is for developers and requires Python.
 - If the direct download does not start, open the
   [latest release page](https://github.com/Tuvshuku/claude-usage-bot/releases/latest)
-  and select the executable there. The desktop app requires 64-bit Windows 10/11.
+  and select the Windows ZIP there. The desktop app requires 64-bit Windows 10/11.
+- Extract the whole ZIP before opening the app. Moving only the executable or
+  opening it from inside the ZIP leaves its bundled Python runtime unavailable.
+- Older single-file releases were flagged by Microsoft Defender on our test
+  machine. The current package uses a normal application folder, and release
+  builds must pass a Defender scan. If a new detection appears, leave it blocked
+  and report the release version and detection name.
 - The pet appears while the initial history scan runs. Open its dashboard to
   see loading status; large histories can take longer on the first launch.
 - If Windows blocks the unsigned download, review the publisher warning and
@@ -492,15 +500,16 @@ to an account.
 
 Run `powershell -ExecutionPolicy Bypass -File scripts/build-windows.ps1` on
 Windows to build into `dist`. The build runs unit tests, checks bundled assets,
-and launches the executable using an isolated profile with sample usage. This
+scans the application folder with Microsoft Defender, and extracts and launches
+the final ZIP using an isolated profile with sample usage. This
 checks the actual WPF dashboard, paths with spaces and Korean characters, and
 startup without Python or WSL on `PATH`.
 
 Every push to `main` and pull request also builds and tests the executable in
 GitHub Actions. To publish a download, run the **Windows executable** workflow
-with a new `release_tag`, such as `v0.5.1`, or push that version tag. A blank
+with an unused `release_tag` in `vMAJOR.MINOR.PATCH` format, or push that version tag. A blank
 manual tag produces an Actions artifact only. A release is published only after
-the executable passes its startup check; existing releases are not overwritten.
+the package passes its scan and startup check; existing releases are not overwritten.
 The website's download button always points to the latest published release.
 
 ## License
